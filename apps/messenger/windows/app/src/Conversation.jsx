@@ -7,7 +7,7 @@ import { AutoReacts, count } from "./Wallet.jsx";
 import { Page, Section } from "./Settings.jsx";
 import { CARD_MARK } from "./Card.jsx";
 import { listen } from "@tauri-apps/api/event";
-import { platesBack, restoresCaption, restoresReply, restoredAfterFailure, sameComposer, withoutPlates } from "./tray.js";
+import { platesBack, plateWords, restoredAfterFailure, sameComposer, withoutPlates } from "./tray.js";
 import sendButton from "./assets/send_button.png";
 import voiceKey from "./assets/ios/VoiceRecordButton.png";
 import videoKey from "./assets/ios/VideoRecordButton.png";
@@ -213,6 +213,8 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
   const trayChat = useRef(chat);
   trayChat.current = chat;
   const trayEpoch = useRef(0);
+  // each plate carries the words and the quote it was staged with, so a failure never hands them to another file
+  const trayWords = useRef(new Map());
   const draftNow = useRef(draft);
   draftNow.current = draft;
   const replyNow = useRef(replying);
@@ -726,10 +728,10 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     if (lines.length) setCardNote(lines); else window.dispatchEvent(new CustomEvent("montana-open-pane", { detail: "card" }));
   };
   // `taken` hears that the group's word let them go, before the field empties (the tray leaves only then)
-  const sendFiles = async (files, taken) => {
+  const sendFiles = async (files, taken, meta) => {
     const list = [...files].filter((f) => f.size > 0);
     if (!list.length) return;
-    const caption = draft.trim(), q = replying;
+    const caption = meta?.caption ?? draft.trim(), q = meta?.reply ?? replying;
     const epoch = trayEpoch.current;
     if (talk?.group && !talk.group.owner) {
       for (const f of list) {
@@ -781,27 +783,29 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     trayLeaving.current = true;
     const items = tray;
     const owner = chat, epoch = trayEpoch.current;
-    const caption = draft.trim(), reply = replying;
+    const saved = items[0] ? trayWords.current.get(items[0].id) : undefined;
+    const words = plateWords(saved, draft.trim(), replying);
+    if (items[0] && !saved) trayWords.current.set(items[0].id, words);
     let gone = false;
     invoke("trace", { line: `tray_send n=${items.length} files=${items.filter((x) => x.kind === "doc").length}` }).catch(() => {});
     const stillMine = () => trayChat.current === owner && trayEpoch.current === epoch;
     const failed = (await sendFiles(items.map((x) => x.file), () => {
       gone = true; trayLeaving.current = false;
       if (stillMine()) { setTray((x) => withoutPlates(x, items.map((it) => it.id))); setCarried(null); }
-    })) || [];
+    }, words)) || [];
     if (!gone) { trayLeaving.current = false; return; }
     letGo(items.filter((_, i) => !failed.includes(i)));
+    // the words belong to the file that carried them: a sent first plate drops them, a returned one keeps them
+    if (items[0] && !failed.includes(0)) trayWords.current.delete(items[0].id);
     const backIdx = restoredAfterFailure({ owner, current: trayChat.current, ownerEpoch: epoch, currentEpoch: trayEpoch.current, failed });
     const back = platesBack(items, backIdx);
     if (!back.length && failed.length) {
+      for (const i of failed) trayWords.current.delete(items[i].id);
       letGo(items.filter((_, i) => failed.includes(i)));
       invoke("trace", { line: `tray_drop_other_chat n=${failed.length}` }).catch(() => {});
     }
     if (back.length) {
       setTray((x) => [...back, ...x]);
-      // the words and the quote were cleared when this send began: a retry needs them back, but never over a new choice
-      if (stillMine() && restoresCaption(back, items[0]?.id, draftNow.current)) setDraft(caption);
-      if (stillMine() && restoresReply(back, items[0]?.id, replyNow.current)) setReplying(reply);
       invoke("trace", { line: `tray_back n=${back.length} of=${items.length}` }).catch(() => {});
     }
   };

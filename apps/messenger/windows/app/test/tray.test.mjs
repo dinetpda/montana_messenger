@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { platesBack, restoresCaption, restoresReply, restoredAfterFailure, sameComposer, sameTrayOwner, withoutPlates } from "../src/tray.js";
+import { platesBack, plateWords, restoredAfterFailure, sameComposer, sameTrayOwner, withoutPlates } from "../src/tray.js";
 
 const plate = (id, name) => ({ id, file: { name, size: 3 }, kind: "doc" });
 
@@ -63,20 +63,17 @@ test("plates staged while a send is finishing stay in the tray", () => {
   assert.deepEqual(left.map((p) => p.id), ["new"]);
 });
 
-test("a returned first plate brings its caption back only into an empty field", () => {
-  const items = [{ id: "p1" }];
-  assert.equal(restoresCaption(items, "p1", ""), true);
-  assert.equal(restoresCaption(items, "p1", "typed meanwhile"), false);
-  assert.equal(restoresCaption([{ id: "p2" }], "p1", ""), false);
-});
 
-test("a returned first plate never replaces a reply chosen meanwhile", () => {
-  assert.equal(restoresReply([{ id: "p1" }], "p1", null), true);
-  assert.equal(restoresReply([{ id: "p1" }], "p1", { mid: "M2" }), false);
-});
 
 test("a late preflight never clears another chat's composer", () => {
   assert.equal(sameComposer("A", "A", 1, 1), true);
   assert.equal(sameComposer("A", "B", 1, 1), false);
   assert.equal(sameComposer("A", "A", 1, 2), false);
+});
+
+test("a plate keeps the words it was staged with, another plate gets its own", () => {
+  const first = plateWords({ caption: "A", reply: { mid: "M1" } }, "", null);
+  assert.deepEqual(first, { caption: "A", reply: { mid: "M1" } });
+  const second = plateWords(undefined, "B", null);
+  assert.deepEqual(second, { caption: "B", reply: null });
 });

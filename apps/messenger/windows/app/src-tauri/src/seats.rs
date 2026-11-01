@@ -405,9 +405,8 @@ pub enum LiftError {
 fn store_words(dir: &Path, typed: &str) -> Result<(), crate::seed::Refused> {
     let vault = crate::vault::Vault::at(&dir.join("vault")).map_err(|_| crate::seed::Refused::Storage)?;
     let seed = crate::seed::Seed::new(vault);
-    if !seed.has_seed() {
-        seed.enter(typed)?;
-    }
+    // even a seat that holds a (possibly damaged) mnemonic is repaired: its owner is the twin that matched
+    seed.enter(typed)?;
     Ok(())
 }
 

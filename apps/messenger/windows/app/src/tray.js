@@ -46,3 +46,8 @@ export function restoresReply(back, firstPlateId, currentReply) {
 export function sameComposer(owner, current, ownerEpoch, currentEpoch) {
   return owner === current && ownerEpoch === currentEpoch;
 }
+
+/** The words a plate carries: those it was staged with, or the composer's for a plate that has none yet. */
+export function plateWords(saved, draft, reply) {
+  return saved ?? { caption: draft, reply };
+}
