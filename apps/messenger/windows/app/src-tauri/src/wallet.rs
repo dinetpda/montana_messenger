@@ -560,7 +560,6 @@ pub enum Sent {
 /// under the record's name; a record no node took gives it back.
 /// `on` -- the letter a paid reaction's SEND stands under (iOS send3 on target): its coins stand under that letter.
 pub fn send3(vault: &Vault, h: &Hands, conv: &str, key: &PipeKey, coins_: i64, on: Option<&str>) -> Sent {
-    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(peer) = peer_from(vault, conv).and_then(|p| cointx::unhex32(&p)) else { return Sent::NotApplicable("no receiver key".into()) };
     let me = h.from();
     let Some(door) = cointx::chain_door(&me) else { return Sent::Failed };
@@ -593,6 +592,7 @@ pub fn send3(vault: &Vault, h: &Hands, conv: &str, key: &PipeKey, coins_: i64, o
         let (code, o) = ask(&door, "/tx-put", &json!({ "rec": crate::wire::b64(&rec) }));
         mark(&format!("send code={code} coins={coins_} dec={dec} id={} attempt={attempt}", &id[..12]));
         if code == 200 && o.as_ref().and_then(|o| o["id"].as_str()) == Some(id.as_str()) {
+            let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let mut s = state(vault);
             if let Some(a) = s["open"].as_array_mut() { a.push(json!({ "id": id, "conv": conv, "coins": coins_, "at": st.now })); }
             save(vault, &s);
@@ -810,10 +810,9 @@ pub fn credits_gone(vault: &Vault) {
 
 /// An untaken SEND comes back after a day by a REFUND on my chain (iOS refundDue): its node's clock decides, one fate a SEND.
 pub fn refund_due(vault: &Vault, h: &Hands) {
-    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let me = h.from();
     let Some(door) = cointx::chain_door(&me) else { return };
-    let mut s = state(vault);
+    let s = state(vault);
     let open = s["open"].as_array().cloned().unwrap_or_default();
     if open.is_empty() {
         return;
@@ -841,8 +840,10 @@ pub fn refund_due(vault: &Vault, h: &Hands) {
         mark(&format!("refund code={code} word={word}"));
         if code == 200 { coins::moved(vault, "receive", c, &back, Some(conv), None); } else { left.push(o); }
     }
-    s["open"] = json!(left);
-    save(vault, &s);
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut latest = state(vault);
+    latest["open"] = json!(left);
+    save(vault, &latest);
 }
 
 fn mark(line: &str) {
