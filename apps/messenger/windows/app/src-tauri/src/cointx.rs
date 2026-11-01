@@ -109,11 +109,6 @@ pub fn key_tag(pk: &[u8]) -> String {
     hex(&sha(&[pk]))
 }
 
-/// The pair's tag: HMAC-SHA-256 under the pipe's secret -- its two ends know it, no one else does.
-pub fn pair_tag(secret: &[u8]) -> [u8; 32] {
-    hmac(secret, b"mt-coin-pair-v1")
-}
-
 /// The blind of a SEND: HMAC-SHA-256 under the pair's secret over ASCII mt-coin-blind and the SEND's nonce (section 1).
 pub fn blind(secret: &[u8], nonce: &[u8]) -> [u8; 32] {
     hmac(secret, &[b"mt-coin-blind".as_slice(), nonce].concat())

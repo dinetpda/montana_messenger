@@ -11,6 +11,7 @@
 //! window (`--shelf <id>`) -- their letters land, are receipted and ring under their name, their queue rides, their coins and
 //! their wall go on. A folder is held by one process at a time (its lock file); a person on the shelf leaves when they are seated,
 //! when their seat leaves the book, or when no window's process has stood for half a minute.
+use crate::pipekey::PipeKey;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -260,12 +261,17 @@ pub fn pair_with_shelf(h: &Here, id: &str, mine: &crate::book::Book, my_name: &s
     });
     r
 }
-/// The meeting itself, with the other person's vault and name: the pipe the two share, or one born to their card and handed to them.
+/// The meeting itself, with the other person's vault and name: the pipe the two share -- found by its name and proven by what it
+/// derives (PipeKey::same_pipe), their vault read and never written -- or one born to their card and handed to them in the form
+/// of the day.
 fn pair_with(v: &crate::vault::Vault, name: &str, mine: &crate::book::Book, my_name: &str) -> Option<String> {
-    let theirs = crate::book::Book::new(v.clone());
-    let mut held: Vec<Vec<u8>> = theirs.refs().iter().filter_map(|r| theirs.secret(r)).collect();
-    held.extend(met(v).into_iter().map(|(_, s, _)| s));
-    if let Some(r) = mine.refs().into_iter().find(|r| mine.secret(r).is_some_and(|s| held.contains(&s))) {
+    let day = mine.arrival_day();
+    let mut held: Vec<PipeKey> = crate::book::Book::peek(v, day);
+    held.extend(met(v, day).into_iter().map(|(_, k, _)| k));
+    // iOS compares the pipes held (their form included); D3 (MONTANA_D3_SAME_PIPE) by what they derive
+    let same = |h: &PipeKey, k: &PipeKey| if crate::rules::get().d3_same_pipe { h.reference() == k.reference() && h.same_pipe(k) } else { h == k };
+    let shared = mine.pipes().into_iter().find(|(_, k)| held.iter().any(|h| same(h, k)));
+    if let Some((r, _)) = shared {
         return Some(r);
     }
     for (root, sk) in (crate::card::Card { vault: v }).own_keys() {
@@ -276,10 +282,10 @@ fn pair_with(v: &crate::vault::Vault, name: &str, mine: &crate::book::Book, my_n
         if back.as_deref() != Some(&secret[..]) {
             continue;
         }
-        let Some(r) = mine.establish(&secret) else { continue };
-        let tag = crate::wire::hex(&crate::wire::sha(&[&secret]))[..16].to_string();
-        let handed = serde_json::json!({ "s": crate::wire::b64(&secret), "n": my_name.trim() }).to_string();
-        if !v.set(&format!("{MET}{tag}"), handed.as_bytes()) {
+        let key = PipeKey::new(&secret);
+        let Some(r) = mine.establish(&key) else { continue };
+        let handed = serde_json::json!({ "s": key.sealed_b64(day), "n": my_name.trim() }).to_string();
+        if !v.set(&format!("{MET}{}", &r[..16]), handed.as_bytes()) {
             mine.drop_chat(&r);
             continue;
         }
@@ -289,14 +295,15 @@ fn pair_with(v: &crate::vault::Vault, name: &str, mine: &crate::book::Book, my_n
     None
 }
 
-/// The pipes handed to this vault's person: (the entry's name, the secret, the name of the one who met them).
-fn met(v: &crate::vault::Vault) -> Vec<(String, Vec<u8>, String)> {
+/// The pipes handed to this vault's person, read in the form of the day: (the entry's name, the pipe, the name of the one who
+/// met them).
+fn met(v: &crate::vault::Vault, day: i64) -> Vec<(String, PipeKey, String)> {
     let Ok(dir) = std::fs::read_dir(v.dir()) else { return vec![] };
     dir.flatten().filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".sealed")).filter(|n| n.starts_with(MET)).map(str::to_string))
         .filter_map(|n| {
             let o: serde_json::Value = serde_json::from_slice(&v.get(&n)?).ok()?;
-            let s = o["s"].as_str().and_then(crate::wire::unb64).filter(|s| !s.is_empty())?;
-            Some((n, s, o["n"].as_str().unwrap_or("").to_string()))
+            let k = o["s"].as_str().and_then(|s| PipeKey::from_sealed_b64(s, day)).filter(|k| k.is_whole())?;
+            Some((n, k, o["n"].as_str().unwrap_or("").to_string()))
         }).collect()
 }
 /// THE PIPES A PERSON WAS MET BY HERE ARE BORN IN THEIR OWN BOOK (iOS landShelf, the author's word 11.10.2026 19:0x MSK): every pipe
@@ -304,8 +311,8 @@ fn met(v: &crate::vault::Vault) -> Vec<(String, Vec<u8>, String)> {
 /// its entry leaves. The pipes taken.
 pub fn take_met(v: &crate::vault::Vault, mine: &crate::book::Book) -> usize {
     let mut born = 0;
-    for (n, secret, name) in met(v) {
-        let Some(r) = mine.establish(&secret) else { continue };
+    for (n, key, name) in met(v, mine.arrival_day()) {
+        let Some(r) = mine.establish(&key) else { continue };
         mine.open(&r, &name, false);
         v.delete(&n);
         born += 1;
@@ -543,12 +550,41 @@ mod tests {
         (crate::card::Card { vault: &vb }).offer_permanent("Б").unwrap();   // the unit tests lay nothing on a node
         let r = pair_with(&vb, "Б", &a, "А").expect("their card opens");
         assert_eq!(a.chat(&r).map(|c| c.name).as_deref(), Some("Б"));
-        assert!(b.secret(&r).is_none(), "handed, not yet taken by their own process");
+        assert!(!b.holds(&r), "handed, not yet taken by their own process");
         assert_eq!(pair_with(&vb, "Б", &a, "А").as_deref(), Some(r.as_str()), "a pipe handed and not yet taken is the one they share");
         assert_eq!(take_met(&vb, &b), 1);
-        assert_eq!((b.secret(&r), b.chat(&r).map(|c| c.name)), (a.secret(&r), Some("А".to_string())), "one secret, one name on both sides");
+        assert!(b.key(&r).unwrap().same_pipe(&a.key(&r).unwrap()), "one pipe on both sides");
+        assert_eq!(b.chat(&r).map(|c| c.name), Some("А".to_string()), "one name on both sides");
         assert_eq!(take_met(&vb, &b), 0, "taken once");
         assert_eq!(pair_with(&vb, "Б", &a, "А").as_deref(), Some(r.as_str()), "the pipe the two share is found first");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A PIPE HANDED ON THE ERASE DAY (iOS MTSeats.meetOnShelf: the stored form of the day): the seat's entry holds the floor; both
+    /// books hold the same pipe. iOS compares the pipes held, their form included, and the two books differ in form there, so
+    /// the second meeting makes another pipe; with the walk of #38 case 13 and D3 the shared pipe is found first.
+    #[test]
+    fn a_pipe_handed_on_the_erase_day_is_handed_as_its_floor() {
+        use crate::pipekey::{ERASE_DAY, FLOOR_FORM_SIZE};
+        use crate::rules::{self, Rules};
+        for rl in [Rules::IOS, Rules::ALL] {
+            rules::with(rl, || {
+                let dir = std::env::temp_dir().join(format!("mt-pair-floor-{}", crate::wire::hex(&crate::crypto::random(6).unwrap())));
+                let (va, vb) = (crate::vault::Vault::at(&dir.join("a")).unwrap(), crate::vault::Vault::at(&dir.join("b")).unwrap());
+                let on = |v: &crate::vault::Vault| crate::book::Book::new_on(v.clone(), std::sync::Arc::new(|| ERASE_DAY));
+                let (a, b) = (on(&va), on(&vb));
+                (crate::card::Card { vault: &vb }).offer_permanent("Б").unwrap();
+                let r = pair_with(&vb, "Б", &a, "А").expect("their card opens");
+                let entry: serde_json::Value = serde_json::from_slice(&vb.get(&format!("{MET}{}", &r[..16])).unwrap()).unwrap();
+                assert_eq!(entry["s"].as_str().and_then(crate::wire::unb64).map(|f| f.len()), Some(FLOOR_FORM_SIZE), "the floor is handed");
+                assert_eq!(a.key(&r).unwrap().holds_origin(), !crate::book::Book::walks(), "the seated book's form as its book stands");
+                assert_eq!(take_met(&vb, &b), 1);
+                let theirs = b.key(&r).unwrap();
+                assert!(theirs.same_pipe(&a.key(&r).unwrap()) && theirs.floor_day() == Some(ERASE_DAY - 2));
+                let again = pair_with(&vb, "Б", &a, "А");
+                assert_eq!(again.as_deref() == Some(r.as_str()), rl.d3_same_pipe, "found first with D3; iOS makes another");
+                let _ = std::fs::remove_dir_all(&dir);
+            });
+        }
     }
 }
