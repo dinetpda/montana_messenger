@@ -212,10 +212,12 @@ impl Messenger {
         });
     }
 
-    /// A new person sits here: what the last one derived leaves.
+    /// A new person sits here: what the last one derived leaves in memory; its sealed store stays its own.
     pub fn reseat(&self) {
+        self.book.forget_all();
         *self.keys.lock().unwrap() = None;
         *self.archive.lock().unwrap() = None;
+        *self.open.lock().unwrap() = None;
     }
 
     /// THE ARCHIVE OF THIS IDENTITY (<data>/archive), its keys from the words, this machine's own device id (16 bytes, kept).

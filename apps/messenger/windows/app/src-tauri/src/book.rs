@@ -950,6 +950,29 @@ impl Book {
         self.keep(n, &snapshot);
     }
 
+    /// The identity left: every in-memory owner of its pipes, heals, feeds and floor guard lets go.
+    /// The sealed store is the seat's and stays untouched, as iOS MTPipeBook.forgetAll.
+    pub fn forget_all(&self) {
+        let _heal = self.heal_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _write = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        *self.keys.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.heals.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.chats.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.guard.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.guard_said.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+        *self.held_said.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+        *self.refused_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.floored_seen.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub fn caches_loaded(&self) -> (bool, bool, bool) {
+        (
+            self.keys.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
+            self.heals.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
+            self.chats.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
+        )
+    }
 }
 
 /// WHO A SEAT'S FOLDER BELONGS TO, as the book can tell (trial 03): None when the folder holds no person at all;
