@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { platesBack, restoresCaption, restoresReply, restoredAfterFailure, sameTrayOwner, withoutPlates } from "../src/tray.js";
+import { platesBack, restoresCaption, restoresReply, restoredAfterFailure, sameComposer, sameTrayOwner, withoutPlates } from "../src/tray.js";
 
 const plate = (id, name) => ({ id, file: { name, size: 3 }, kind: "doc" });
 
@@ -73,4 +73,9 @@ test("a returned first plate brings its caption back only into an empty field", 
 test("a returned first plate never replaces a reply chosen meanwhile", () => {
   assert.equal(restoresReply([{ id: "p1" }], "p1", null), true);
   assert.equal(restoresReply([{ id: "p1" }], "p1", { mid: "M2" }), false);
+});
+
+test("a late preflight never clears another chat's composer", () => {
+  assert.equal(sameComposer("A", "A"), true);
+  assert.equal(sameComposer("A", "B"), false);
 });

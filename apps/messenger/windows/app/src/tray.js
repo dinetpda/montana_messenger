@@ -41,3 +41,8 @@ export function restoresCaption(back, firstPlateId, draftNow) {
 export function restoresReply(back, firstPlateId, currentReply) {
   return back.some((plate) => plate.id === firstPlateId) && !currentReply;
 }
+
+/** Whether a completion still stands in the chat that owns the composer it would clear. */
+export function sameComposer(owner, current) {
+  return owner === current;
+}

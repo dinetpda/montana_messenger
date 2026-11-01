@@ -7,7 +7,7 @@ import { AutoReacts, count } from "./Wallet.jsx";
 import { Page, Section } from "./Settings.jsx";
 import { CARD_MARK } from "./Card.jsx";
 import { listen } from "@tauri-apps/api/event";
-import { platesBack, restoresCaption, restoresReply, restoredAfterFailure, withoutPlates } from "./tray.js";
+import { platesBack, restoresCaption, restoresReply, restoredAfterFailure, sameComposer, withoutPlates } from "./tray.js";
 import sendButton from "./assets/send_button.png";
 import voiceKey from "./assets/ios/VoiceRecordButton.png";
 import videoKey from "./assets/ios/VideoRecordButton.png";
@@ -738,7 +738,7 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
       }
     }
     taken?.();
-    setDraft(""); setReplying(null); setProblem(null);
+    if (sameComposer(chat, chatNow.current)) { setDraft(""); setReplying(null); setProblem(null); }
     pinned.current = true;
     // the places that did not leave are said back, so the tray keeps them (nothing lost, nothing sent twice)
     const run = async () => {
