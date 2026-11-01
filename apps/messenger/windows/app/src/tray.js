@@ -31,3 +31,8 @@ export function platesBack(items, failed) {
 export function withoutPlates(tray, sentIds) {
   return tray.filter((plate) => !sentIds.includes(plate.id));
 }
+
+/** Whether a returned first plate should bring its caption and quote back (the field is still empty). */
+export function restoresCaption(back, firstPlateId, draftNow) {
+  return back.some((plate) => plate.id === firstPlateId) && !String(draftNow || "").trim();
+}

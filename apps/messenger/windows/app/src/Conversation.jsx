@@ -7,7 +7,7 @@ import { AutoReacts, count } from "./Wallet.jsx";
 import { Page, Section } from "./Settings.jsx";
 import { CARD_MARK } from "./Card.jsx";
 import { listen } from "@tauri-apps/api/event";
-import { platesBack, restoredAfterFailure, withoutPlates } from "./tray.js";
+import { platesBack, restoresCaption, restoredAfterFailure, withoutPlates } from "./tray.js";
 import sendButton from "./assets/send_button.png";
 import voiceKey from "./assets/ios/VoiceRecordButton.png";
 import videoKey from "./assets/ios/VideoRecordButton.png";
@@ -213,6 +213,8 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
   const trayChat = useRef(chat);
   trayChat.current = chat;
   const trayEpoch = useRef(0);
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
   useEffect(() => () => letGo(trayNow.current), []);
   const [seen, setSeen] = useState(null);
   const [typers, setTypers] = useState([]);   // who types in the group now, by name (iOS MTGroupTyping)
@@ -776,6 +778,7 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     trayLeaving.current = true;
     const items = tray;
     const owner = chat, epoch = trayEpoch.current;
+    const caption = draft.trim(), reply = replying;
     let gone = false;
     invoke("trace", { line: `tray_send n=${items.length} files=${items.filter((x) => x.kind === "doc").length}` }).catch(() => {});
     const stillMine = () => trayChat.current === owner && trayEpoch.current === epoch;
@@ -793,6 +796,10 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     }
     if (back.length) {
       setTray((x) => [...back, ...x]);
+      // the words and the quote were cleared when this send began: a retry needs them back
+      if (stillMine() && restoresCaption(back, items[0]?.id, draftNow.current)) {
+        setDraft(caption); setReplying(reply);
+      }
       invoke("trace", { line: `tray_back n=${back.length} of=${items.length}` }).catch(() => {});
     }
   };

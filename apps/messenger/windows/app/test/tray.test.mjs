@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { platesBack, restoredAfterFailure, sameTrayOwner, withoutPlates } from "../src/tray.js";
+import { platesBack, restoresCaption, restoredAfterFailure, sameTrayOwner, withoutPlates } from "../src/tray.js";
 
 const plate = (id, name) => ({ id, file: { name, size: 3 }, kind: "doc" });
 
@@ -61,4 +61,11 @@ test("plates staged while a send is finishing stay in the tray", () => {
   const tray = [plate("sent", "a.pdf"), plate("new", "b.pdf")];
   const left = withoutPlates(tray, ["sent"]);
   assert.deepEqual(left.map((p) => p.id), ["new"]);
+});
+
+test("a returned first plate brings its caption back only into an empty field", () => {
+  const items = [{ id: "p1" }];
+  assert.equal(restoresCaption(items, "p1", ""), true);
+  assert.equal(restoresCaption(items, "p1", "typed meanwhile"), false);
+  assert.equal(restoresCaption([{ id: "p2" }], "p1", ""), false);
 });
