@@ -59,5 +59,5 @@ export function wordsForPlates(items, saved, draft, reply) {
 
 /** Whether the field still holds the words a send carried (a draft typed meanwhile is not deleted). */
 export function sameWords(draft, reply, words) {
-  return draft === words.caption && reply === words.reply;
+  return String(draft).trim() === words.caption && reply === words.reply;
 }

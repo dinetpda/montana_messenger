@@ -737,7 +737,7 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
       for (const f of list) {
         const k = f.type.startsWith("image/") ? "img" : f.type.startsWith("video/") ? "vid" : f.type.startsWith("audio/") ? "aud" : "doc";
         const why = await invoke("group_refusal", { chat, words: "\u200B\u200BMD:" + JSON.stringify({ k, n: f.name, cap: caption }) }).catch(() => null);
-        if (why) { setProblem(refusalWords(why)); return; }
+        if (why) { setProblem(refusalWords(why)); return null; }
       }
     }
     taken?.();
@@ -793,10 +793,17 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     let gone = false;
     invoke("trace", { line: `tray_send n=${items.length} files=${items.filter((x) => x.kind === "doc").length}` }).catch(() => {});
     const stillMine = () => trayChat.current === owner && trayEpoch.current === epoch;
-    const failed = (await sendFiles(items.map((x) => x.file), () => {
+    const sent = await sendFiles(items.map((x) => x.file), () => {
       gone = true; trayLeaving.current = false;
       if (stillMine()) { setTray((x) => withoutPlates(x, items.map((it) => it.id))); setCarried(null); }
-    }, wordsList)) || [];
+    }, wordsList);
+    if (sent === null) {
+      // refused before sending: the visible words are the ones to retry with, not the snapshot
+      items.forEach((it) => trayWords.current.delete(it.id));
+      trayLeaving.current = false;
+      return;
+    }
+    const failed = sent || [];
     if (!gone) { trayLeaving.current = false; return; }
     letGo(items.filter((_, i) => !failed.includes(i)));
     // the words belong to the file that carried them: every sent plate drops them, a returned one keeps them

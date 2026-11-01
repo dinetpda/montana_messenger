@@ -89,3 +89,7 @@ test("a draft typed during a retry is not the send's words", () => {
   assert.equal(sameWords("new draft", null, { caption: "old", reply: null }), false);
   assert.equal(sameWords("old", null, { caption: "old", reply: null }), true);
 });
+
+test("whitespace around an unchanged caption still clears the field", () => {
+  assert.equal(sameWords("  caption  ", null, { caption: "caption", reply: null }), true);
+});
