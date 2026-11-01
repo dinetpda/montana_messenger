@@ -51,3 +51,13 @@ export function sameComposer(owner, current, ownerEpoch, currentEpoch) {
 export function plateWords(saved, draft, reply) {
   return saved ?? { caption: draft, reply };
 }
+
+/** The words each plate carries, in order: its saved words, the composer's for the first, none for the rest. */
+export function wordsForPlates(items, saved, draft, reply) {
+  return items.map((it, i) => saved.get(it.id) ?? (i === 0 ? { caption: draft, reply } : { caption: "", reply: null }));
+}
+
+/** Whether the field still holds the words a send carried (a draft typed meanwhile is not deleted). */
+export function sameWords(draft, reply, words) {
+  return draft === words.caption && reply === words.reply;
+}

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { platesBack, plateWords, restoredAfterFailure, sameComposer, sameTrayOwner, withoutPlates } from "../src/tray.js";
+import { platesBack, plateWords, restoredAfterFailure, sameComposer, sameTrayOwner, sameWords, withoutPlates, wordsForPlates } from "../src/tray.js";
 
 const plate = (id, name) => ({ id, file: { name, size: 3 }, kind: "doc" });
 
@@ -76,4 +76,16 @@ test("a plate keeps the words it was staged with, another plate gets its own", (
   assert.deepEqual(first, { caption: "A", reply: { mid: "M1" } });
   const second = plateWords(undefined, "B", null);
   assert.deepEqual(second, { caption: "B", reply: null });
+});
+
+test("reordering returned plates keeps each plate's own words", () => {
+  const saved = new Map([["A", { caption: "caption A", reply: { mid: "M1" } }]]);
+  const words = wordsForPlates([{ id: "B" }, { id: "A" }], saved, "", null);
+  assert.deepEqual(words[0], { caption: "", reply: null });
+  assert.deepEqual(words[1], { caption: "caption A", reply: { mid: "M1" } });
+});
+
+test("a draft typed during a retry is not the send's words", () => {
+  assert.equal(sameWords("new draft", null, { caption: "old", reply: null }), false);
+  assert.equal(sameWords("old", null, { caption: "old", reply: null }), true);
 });

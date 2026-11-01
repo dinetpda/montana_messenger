@@ -7,7 +7,7 @@ import { AutoReacts, count } from "./Wallet.jsx";
 import { Page, Section } from "./Settings.jsx";
 import { CARD_MARK } from "./Card.jsx";
 import { listen } from "@tauri-apps/api/event";
-import { platesBack, plateWords, restoredAfterFailure, sameComposer, withoutPlates } from "./tray.js";
+import { platesBack, plateWords, restoredAfterFailure, sameComposer, sameWords, withoutPlates, wordsForPlates } from "./tray.js";
 import sendButton from "./assets/send_button.png";
 import voiceKey from "./assets/ios/VoiceRecordButton.png";
 import videoKey from "./assets/ios/VideoRecordButton.png";
@@ -728,10 +728,10 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     if (lines.length) setCardNote(lines); else window.dispatchEvent(new CustomEvent("montana-open-pane", { detail: "card" }));
   };
   // `taken` hears that the group's word let them go, before the field empties (the tray leaves only then)
-  const sendFiles = async (files, taken, meta) => {
+  const sendFiles = async (files, taken, wordsList) => {
     const list = [...files].filter((f) => f.size > 0);
     if (!list.length) return;
-    const caption = meta?.caption ?? draft.trim(), q = meta?.reply ?? replying;
+    const caption = wordsList?.[0]?.caption ?? draft.trim(), q = wordsList ? (wordsList[0]?.reply ?? null) : replying;
     const epoch = trayEpoch.current;
     if (talk?.group && !talk.group.owner) {
       for (const f of list) {
@@ -741,13 +741,18 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
       }
     }
     taken?.();
-    if (sameComposer(chat, chatNow.current, epoch, trayEpoch.current)) { setDraft(""); setReplying(null); setProblem(null); }
+    // the field goes only if it still holds the words this send carried: a draft typed meanwhile is not deleted
+    const wordsMatch = wordsList ? sameWords(draftNow.current, replyNow.current, wordsList[0]) : true;
+    if (sameComposer(chat, chatNow.current, epoch, trayEpoch.current) && wordsMatch) { setDraft(""); setReplying(null); setProblem(null); }
     pinned.current = true;
     // the places that did not leave are said back, so the tray keeps them (nothing lost, nothing sent twice)
     const run = async () => {
       const failed = [];
       for (let i = 0; i < list.length; i++) {
-        await sendFile(chat, list[i], i === 0 ? caption : "", i === 0 && q ? { qt: letterPreview(q.text), qm: q.mid } : null, {}, setHanding)
+        const w = wordsList?.[i];
+        const cap = w ? w.caption : (i === 0 ? caption : "");
+        const rep = w ? w.reply : (i === 0 ? q : null);
+        await sendFile(chat, list[i], cap, rep ? { qt: letterPreview(rep.text), qm: rep.mid } : null, {}, setHanding)
           .catch(() => { failed.push(i); setProblem(t("Not sent")); })
           .finally(() => setHanding(null));
       }
@@ -783,20 +788,19 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     trayLeaving.current = true;
     const items = tray;
     const owner = chat, epoch = trayEpoch.current;
-    const saved = items[0] ? trayWords.current.get(items[0].id) : undefined;
-    const words = plateWords(saved, draft.trim(), replying);
-    if (items[0] && !saved) trayWords.current.set(items[0].id, words);
+    const wordsList = wordsForPlates(items, trayWords.current, draft.trim(), replying);
+    items.forEach((it, i) => { if (!trayWords.current.has(it.id)) trayWords.current.set(it.id, wordsList[i]); });
     let gone = false;
     invoke("trace", { line: `tray_send n=${items.length} files=${items.filter((x) => x.kind === "doc").length}` }).catch(() => {});
     const stillMine = () => trayChat.current === owner && trayEpoch.current === epoch;
     const failed = (await sendFiles(items.map((x) => x.file), () => {
       gone = true; trayLeaving.current = false;
       if (stillMine()) { setTray((x) => withoutPlates(x, items.map((it) => it.id))); setCarried(null); }
-    }, words)) || [];
+    }, wordsList)) || [];
     if (!gone) { trayLeaving.current = false; return; }
     letGo(items.filter((_, i) => !failed.includes(i)));
-    // the words belong to the file that carried them: a sent first plate drops them, a returned one keeps them
-    if (items[0] && !failed.includes(0)) trayWords.current.delete(items[0].id);
+    // the words belong to the file that carried them: every sent plate drops them, a returned one keeps them
+    items.forEach((it, i) => { if (!failed.includes(i)) trayWords.current.delete(it.id); });
     const backIdx = restoredAfterFailure({ owner, current: trayChat.current, ownerEpoch: epoch, currentEpoch: trayEpoch.current, failed });
     const back = platesBack(items, backIdx);
     if (!back.length && failed.length) {
