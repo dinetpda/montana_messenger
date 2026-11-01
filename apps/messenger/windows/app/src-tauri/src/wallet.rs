@@ -78,12 +78,14 @@ pub fn told_key(vault: &Vault, conv: &str, k: &str) -> bool {
     state(vault)["told"][conv].as_str() == Some(k)
 }
 pub fn note_told_key(vault: &Vault, conv: &str, k: &str) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = state(vault);
     s["told"][conv] = json!(k);
     save(vault, &s);
 }
 /// Their send found no key of mine (iOS forgetToldKey): the mark goes, and the next about word carries the key again.
 pub fn forget_told_key(vault: &Vault, conv: &str) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = state(vault);
     if s["told"].as_object_mut().and_then(|m| m.remove(conv)).is_some() {
         save(vault, &s);
@@ -335,6 +337,7 @@ fn stay_step(stay: Option<u64>, tick: u64, here: bool) -> (Option<u64>, bool, bo
 }
 fn presence_fold_locked(vault: &Vault, from: &mut Option<i64>, now: i64) {
     let Some(start) = *from else { return };
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let elapsed = (now - start).max(0);
     if elapsed > 0 {
         let mut s = state(vault);
@@ -520,6 +523,9 @@ fn state(vault: &Vault) -> Value {
 fn save(vault: &Vault, v: &Value) {
     vault.set(STATE, v.to_string().as_bytes());
 }
+/// Every writer of the coin JSON takes this guard across its read-modify-write, so a fold and a peer mark cannot
+/// overwrite each other's seconds.
+static STATE_LOCK: Mutex<()> = Mutex::new(());
 
 /// A correspondent's coin key, told in their about word («k»): the key a SEND of version 3 commits to.
 pub fn peer_from(vault: &Vault, conv: &str) -> Option<String> {
@@ -529,6 +535,7 @@ pub fn note_peer_from(vault: &Vault, conv: &str, from: &str) {
     if from.len() != 64 || !from.chars().all(|c| c.is_ascii_hexdigit()) {
         return;
     }
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = state(vault);
     if s["k"][conv].as_str() == Some(from) {
         return;
@@ -751,6 +758,7 @@ pub fn scan(vault: &Vault, h: &Hands, pipes: &[(String, PipeKey)]) -> usize {
 /// The v2 records this book credited, each with its sender's key, its coins and its pair (iOS noteCredit2): a REFUND by the sender
 /// takes them back (credits_gone).
 fn note_credit2(vault: &Vault, id: &str, from: &str, coins: i64, conv: &str) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = state(vault);
     if !s["credits2"][id].is_null() {
         return;

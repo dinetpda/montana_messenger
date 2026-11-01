@@ -93,6 +93,9 @@ type Walks = HashMap<Vec<u8>, (i64, Vec<u8>)>;
 /// the base value -> (the steps walked, the value there), emptied at 256 pipes (iOS walkCache)
 static WALK: Mutex<Option<Walks>> = Mutex::new(None);
 
+/// The lowest day a floor has replaced; a walk below it is never cached (an outstanding clone may still compute it).
+static WALK_MIN: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 /// The identity left: the walk cache goes with it (its keys are derived from a person's secret).
 pub fn forget_walks() {
     if let Ok(mut g) = WALK.lock() {
@@ -100,6 +103,7 @@ pub fn forget_walks() {
             cache.clear();
         }
     }
+    WALK_MIN.store(0, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn steps(day: i64) -> i64 {
@@ -153,6 +157,17 @@ impl PipeKey {
         if target <= base_steps {
             return base.to_vec();
         }
+        // below the newest floor the value is computed but never cached: a clone from before the floor must not
+        // leave a retired value behind for later reads
+        if base_steps < WALK_MIN.load(std::sync::atomic::Ordering::SeqCst) {
+            let mut value = base.to_vec();
+            let mut at = base_steps;
+            while at < target {
+                value = domained("mt-pipe-ratchet", &[&value]).to_vec();
+                at += 1;
+            }
+            return value;
+        }
         let mut g = WALK.lock().unwrap_or_else(|e| e.into_inner());
         let cache = g.get_or_insert_with(HashMap::new);
         let (mut at, mut value) = (base_steps, base.to_vec());
@@ -204,6 +219,7 @@ impl PipeKey {
         let k = self.kept();
         let (reference, bid) = (self.ref_bytes()?, unhex(&k.face_bid).filter(|b| b.len() == 32)?);
         let value = arr32(&self.walked(f));
+        WALK_MIN.fetch_max(steps(f), std::sync::atomic::Ordering::SeqCst);
         // the floor replaces the secret: no cached walk (the origin, or a value below this floor) may outlive it
         if let Ok(mut g) = WALK.lock() {
             if let Some(cache) = g.as_mut() {
