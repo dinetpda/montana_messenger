@@ -7,6 +7,7 @@ import { AutoReacts, count } from "./Wallet.jsx";
 import { Page, Section } from "./Settings.jsx";
 import { CARD_MARK } from "./Card.jsx";
 import { listen } from "@tauri-apps/api/event";
+import { restoredAfterFailure } from "./tray.js";
 import sendButton from "./assets/send_button.png";
 import voiceKey from "./assets/ios/VoiceRecordButton.png";
 import videoKey from "./assets/ios/VideoRecordButton.png";
@@ -208,6 +209,10 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
   const [carried, setCarried] = useState(null);
   const trayNow = useRef([]);
   trayNow.current = tray;
+  // a completion belongs to the conversation and the visit the tray was staged in (a switch or a reopen ends it)
+  const trayChat = useRef(chat);
+  trayChat.current = chat;
+  const trayEpoch = useRef(0);
   useEffect(() => () => letGo(trayNow.current), []);
   const [seen, setSeen] = useState(null);
   const [typers, setTypers] = useState([]);   // who types in the group now, by name (iOS MTGroupTyping)
@@ -401,7 +406,7 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
   });
   useEffect(() => {
     setTalk(null); setDraft(""); setProblem(null); setUnreadFrom(null); setMenu(null); setReplying(null); setEditing(null); setPicking(null); setAlbum(null);
-    letGo(trayNow.current); setTray([]); setCarried(null);
+    letGo(trayNow.current); setTray([]); setCarried(null); trayEpoch.current += 1;
     pinned.current = true;
     lastTop.current = 0;
     look(true);
@@ -770,12 +775,21 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     if (trayLeaving.current || !tray.length) return;
     trayLeaving.current = true;
     const items = tray;
+    const owner = chat, epoch = trayEpoch.current;
     let gone = false;
     invoke("trace", { line: `tray_send n=${items.length} files=${items.filter((x) => x.kind === "doc").length}` }).catch(() => {});
-    const failed = (await sendFiles(items.map((x) => x.file), () => { gone = true; trayLeaving.current = false; setTray([]); setCarried(null); })) || [];
+    const stillMine = () => trayChat.current === owner && trayEpoch.current === epoch;
+    const failed = (await sendFiles(items.map((x) => x.file), () => {
+      gone = true; trayLeaving.current = false;
+      if (stillMine()) { setTray([]); setCarried(null); }
+    })) || [];
     if (!gone) { trayLeaving.current = false; return; }
     letGo(items.filter((_, i) => !failed.includes(i)));
-    const back = items.filter((_, i) => failed.includes(i));
+    const back = restoredAfterFailure({ owner, current: trayChat.current, ownerEpoch: epoch, currentEpoch: trayEpoch.current, failed });
+    if (!back.length && failed.length) {
+      letGo(items.filter((_, i) => failed.includes(i)));
+      invoke("trace", { line: `tray_drop_other_chat n=${failed.length}` }).catch(() => {});
+    }
     if (back.length) {
       setTray((x) => [...back, ...x]);
       invoke("trace", { line: `tray_back n=${back.length} of=${items.length}` }).catch(() => {});
