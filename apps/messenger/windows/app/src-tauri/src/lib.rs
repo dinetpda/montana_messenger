@@ -141,9 +141,15 @@ async fn identity_create(p: State<'_, Person>, m: State<'_, Messenger>) -> Resul
 async fn identity_restore(app: AppHandle, p: State<'_, Person>, m: State<'_, Messenger>, words: String) -> Result<(), Failure> {
     // the words of a person waiting on this computer's shelf seat that person again: no second copy of them is born (iOS lift)
     if let Some(h) = seats::here() {
-        if seats::lift(h, &words).is_some() {
-            trace_line("seat lifted by the words");
-            app.restart();
+        match seats::lift(h, &words) {
+            Ok(_) => {
+                trace_line("seat lifted by the words");
+                app.restart();
+            }
+            Err(seats::LiftError::NotHeld) => {}
+            Err(seats::LiftError::Refused(crate::seed::Refused::SeatHeld)) => return Err(Failure::SeatHeld),
+            Err(seats::LiftError::Refused(crate::seed::Refused::Storage)) => return Err(Failure::Storage),
+            Err(seats::LiftError::Refused(_)) => return Err(Failure::Invalid),
         }
     }
     m.reseat();

@@ -393,11 +393,29 @@ pub fn return_to_last(h: &Here) -> Result<(), Refused> {
 /// again, and no second copy of them is born. The empty seat leaves the book. Some(id) when such a person waits.
 /// a seat is also lifted by the twin its store names, so a person whose words went missing out of that seat still
 /// comes back to their own store instead of being refused in a stranger's seat.
-pub fn lift(h: &Here, words: &str) -> Option<String> {
+/// Why a lift did not stand: no seat of this person (the ordinary restore path), or the words could not be written
+/// into the seat that the store names (storage refused, the store is another person's).
+#[derive(Debug, PartialEq, Eq)]
+pub enum LiftError {
+    NotHeld,
+    Refused(crate::seed::Refused),
+}
+
+/// The words of the lifted seat are written there, or the seat is not switched: a failure is the caller's to say.
+fn store_words(dir: &Path, typed: &str) -> Result<(), crate::seed::Refused> {
+    let vault = crate::vault::Vault::at(&dir.join("vault")).map_err(|_| crate::seed::Refused::Storage)?;
+    let seed = crate::seed::Seed::new(vault);
+    if !seed.has_seed() {
+        seed.enter(typed)?;
+    }
+    Ok(())
+}
+
+pub fn lift(h: &Here, words: &str) -> Result<String, LiftError> {
     let mut b = book(&h.base);
-    let me = h.seat.clone()?;
+    let me = h.seat.clone().ok_or(LiftError::NotHeld)?;
     if words_in(&h.folder).is_some() {
-        return None;
+        return Err(LiftError::NotHeld);
     }
     let typed = crate::seed::normal(words);
     let twin = crate::seed::twin_of(&typed);
@@ -414,20 +432,19 @@ pub fn lift(h: &Here, words: &str) -> Option<String> {
                         .and_then(|v| crate::book::store_owner(&v).flatten())
                         .as_deref() == Some(mine)
                 })
-        })?.id.clone();
+        }).map(|s| s.id.clone()).ok_or(LiftError::NotHeld)?;
     // the lifted seat lost its words: the phrase that named it is written there before the app restarts into it
     let found_dir = folder(&h.base, &b, &found);
-    if let Ok(vault) = crate::vault::Vault::at(&found_dir.join("vault")) {
-        let seed = crate::seed::Seed::new(vault);
-        if !seed.has_seed() {
-            let _ = seed.enter(&typed);
-        }
-    }
+    store_words(&found_dir, &typed).map_err(LiftError::Refused)?;
     b.seats.retain(|s| s.id != me);
     b.active = Some(found.clone());
     b.adding = false;
     b.carry = None;
-    write(&h.base, &b).then_some(found)
+    if write(&h.base, &b) {
+        Ok(found)
+    } else {
+        Err(LiftError::Refused(crate::seed::Refused::Storage))
+    }
 }
 
 /// A person born on the empty seat: the making is done, the first screen asks no more (iOS doneAdding / born).
@@ -656,7 +673,7 @@ mod tests {
         assert!(seed.twin().is_some());
         vault.delete(crate::seed::MN); // the words are lost out of that seat; the store and its owner's name stand
 
-        let found = lift(&h1, &words);
+        let found = lift(&h1, &words).ok();
 
         assert_eq!(found.as_deref(), Some(waiting.as_str()), "the store's own name lifts its seat");
         assert_eq!(book(&base).active.as_deref(), Some(waiting.as_str()));
@@ -680,8 +697,19 @@ mod tests {
         let other = crate::seed::generate().unwrap();
         vault.set("mt.twin.ref", crate::seed::twin_of(&other).unwrap().as_bytes());
 
-        assert_eq!(lift(&h1, &other), None, "a conflicting store must not be lifted by its stored twin alone");
+        assert!(matches!(lift(&h1, &other), Err(LiftError::NotHeld)), "a conflicting store must not be lifted by its stored twin alone");
         assert!(book(&base).adding, "a refused lift changes no seat");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn seat_boundary_lift_refuses_when_the_words_cannot_be_written() {
+        let base = std::env::temp_dir().join(format!("mt-seat-lift-store-{}", crate::wire::hex(&crate::crypto::random(6).unwrap())));
+        std::fs::create_dir_all(&base).unwrap();
+        // the seat's vault path is a file: no words can be written there, and the lift must say so instead of switching
+        std::fs::write(base.join("vault"), b"not a vault").unwrap();
+        let words = crate::seed::generate().unwrap();
+        assert_eq!(store_words(&base, &words), Err(crate::seed::Refused::Storage));
         let _ = std::fs::remove_dir_all(&base);
     }
 }
