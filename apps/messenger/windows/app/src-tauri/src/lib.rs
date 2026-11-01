@@ -1098,6 +1098,7 @@ fn seats_walk(app: AppHandle) {
 fn person_left(app: &AppHandle) {
     person::set_front(false);
     person::left(person::global(coins::balance(&app.state::<Messenger>().vault)));
+    wallet::presence_close(&app.state::<Messenger>().vault);
     auto_mint(false, "background");   // the screen locked or the app left: the auto minting stops with it (iOS MTWalletPull.stop)
 }
 
@@ -1286,7 +1287,7 @@ fn coin_walk(app: AppHandle) {
             }
             // while the person is here the chain is asked every beat (iOS beHere, presentBeat): at once when they come, then from the
             // online cut a MINT of the present seconds goes with it; away, once a minute
-            if wallet::stay_due(tick) || (!wallet::staying() && tick % 60 == 5) {
+            if wallet::stay_due(&m.vault, tick) || (!wallet::staying() && tick % 60 == 5) {
                 wallet::reconcile(&m.vault, h, false);
             }
             // what an ended run owed for its calls, once the walk stands; then a talking call's seconds once a window and at its end
@@ -1361,7 +1362,7 @@ async fn wallet_state(m: State<'_, Messenger>, open: Option<bool>) -> Result<ser
     let rate = m.vault.get(RATE).and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
     Ok(serde_json::json!({
         "balance": balance, "available": wallet::available(&m.vault), "split": wallet::split(), "gathering": gathering,
-        // the Time Balance (iOS 2314 MTCoinSplit.growing): the available and the person's seconds on their way to the chain
+        // the Time Balance (iOS 2325 MTCoinSplit.growing): the available and the person's seconds awaiting the core
         "growing": wallet::growing(&m.vault),
         // π's place of the person's coins (iOS MTPiLevels.place(total)): the chain's growing number once it spoke, else the book
         "pi": coins::pi_place(if wallet::split().is_some() { wallet::growing(&m.vault) } else { balance }),

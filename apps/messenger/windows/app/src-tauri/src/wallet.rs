@@ -101,6 +101,9 @@ static SPLIT: Mutex<Option<Split>> = Mutex::new(None);
 static HERE_FROM: Mutex<Option<i64>> = Mutex::new(None);
 /// THE STAY (iOS MTCoinTx.beHere's presence): the walk's tick it began at, none while the person is away.
 static STAY: Mutex<Option<u64>> = Mutex::new(None);
+/// Seconds of presence not confirmed by the core yet (iOS 2325 MTPresenceWait): kept in the person's folder, never spendable.
+const PRESENCE_WAIT: &str = "presenceWait";
+static PRESENCE_FROM: Mutex<Option<i64>> = Mutex::new(None);
 fn local_s() -> f64 {
     crate::wire::now_ms() as f64 / 1000.0
 }
@@ -194,9 +197,8 @@ pub fn reconcile(vault: &Vault, h: &Hands, force: bool) -> Option<Chain3> {
         }
         st = chain3(&me, &door)?;
     }
-    // ONLY THE CHAIN MINTS (iOS reconcile, section 4, fold-6): from the node's TX_TIME_CUT the chain credits the key's seconds itself, so
-    // the phone lays no MINT and shows the fold /tx-head answers -- until the node's TX_ONLINE_CUT, past which a key's life mints
-    // nothing by itself
+    // ONLY THE CHAIN MINTS (iOS reconcile, section 4, fold-6 and fold-9): from the node's TX_TIME_CUT the chain credits the key's
+    // seconds itself, so the phone lays no MINT and shows the fold /tx-head answers; from TX_MINT_STOP it lays no MINT at all
     if cointx::TIME_CUT <= st.now {
         // MINTING IS ITS OWN ROAD (fold-7): the node counts of a MINT only what its interval holds of the last MINT_FRESH seconds
         // before it takes it, so while the person is here the computer lays the seconds since the last MINT, never older than the
@@ -209,12 +211,12 @@ pub fn reconcile(vault: &Vault, h: &Hands, force: bool) -> Option<Chain3> {
             }
             came.unwrap_or(st.now)
         };
-        if !(cointx::ONLINE_CUT <= st.now && here() && st.mint_end + 60 <= st.now) {
+        if !(cointx::ONLINE_CUT <= st.now && st.now < cointx::MINT_STOP && here() && st.mint_end + 60 <= st.now) {
             told(&st);
             return Some(st);
         }
         let (code, word, _) = lay_on_head(h, &|s| {
-            if s.height <= 0 || s.now < cointx::ONLINE_CUT {
+            if s.height <= 0 || s.now < cointx::ONLINE_CUT || cointx::MINT_STOP <= s.now {
                 return None;
             }
             let t1 = s.now;
@@ -297,11 +299,23 @@ pub const PRESENT_BEAT: u64 = 40;
 
 /// THE PERSON STAYS (iOS MTCoinTx.beHere): the person come, the chain is asked at once, then every beat while they stay; the stay ends
 /// at the first beat that finds them away, and the second they came goes with it. The answer: whether the chain is asked at this tick.
-pub fn stay_due(tick: u64) -> bool {
+pub fn stay_due(vault: &Vault, tick: u64) -> bool {
+    let now = crate::wire::now_ms() / 1000;
     let mut stay = STAY.lock().unwrap();
     let (next, ask, fresh) = stay_step(*stay, tick, here());
+    if ask && here() && cointx::MINT_STOP <= now {
+        let mut from = PRESENCE_FROM.lock().unwrap();
+        if from.is_none() {
+            *from = Some(now);
+        } else {
+            presence_fold_at(vault, now);
+        }
+    }
     if fresh {
         *HERE_FROM.lock().unwrap() = None;
+        if !here() {
+            presence_close(vault);
+        }
     }
     *stay = next;
     ask
@@ -318,6 +332,32 @@ fn stay_step(stay: Option<u64>, tick: u64, here: bool) -> (Option<u64>, bool, bo
         Some(began) if (tick - began).is_multiple_of(PRESENT_BEAT) =>if here { (stay, true, false) } else { (None, false, true) },
         Some(_) => (stay, false, false),
     }
+}
+fn presence_fold_at(vault: &Vault, now: i64) {
+    let Some(from) = *PRESENCE_FROM.lock().unwrap() else { return };
+    let elapsed = (now - from).max(0);
+    if elapsed > 0 {
+        let mut s = state(vault);
+        s[PRESENCE_WAIT] = json!(s[PRESENCE_WAIT].as_i64().unwrap_or(0) + elapsed);
+        save(vault, &s);
+    }
+    *PRESENCE_FROM.lock().unwrap() = Some(now);
+}
+/// The app leaving the screen folds the open stay at once (iOS 2325 MTPresenceWait.close).
+pub fn presence_close(vault: &Vault) {
+    presence_fold_at(vault, crate::wire::now_ms() / 1000);
+    *PRESENCE_FROM.lock().unwrap() = None;
+}
+fn presence_seconds_at(vault: &Vault, now: i64) -> i64 {
+    if MY_FROM.lock().unwrap().is_none() {
+        return 0;
+    }
+    let kept = state(vault)[PRESENCE_WAIT].as_i64().unwrap_or(0);
+    let open = PRESENCE_FROM.lock().unwrap().map_or(0, |from| (now - from).max(0));
+    kept + open
+}
+fn presence_seconds(vault: &Vault) -> i64 {
+    presence_seconds_at(vault, crate::wire::now_ms() / 1000)
 }
 /// A present MINT's first second (iOS reconcile's t0, 2314): the later of the last MINT's end, the node's freshness less the road's
 /// margin, and the person's coming.
@@ -338,14 +378,14 @@ pub fn minting() -> i64 {
     on_way(second + (local_s() - at).max(0.0) as i64, mint_end, from)
 }
 fn on_way(now: i64, mint_end: i64, from: i64) -> i64 {
-    if now < cointx::ONLINE_CUT {
+    if !(cointx::ONLINE_CUT..cointx::MINT_STOP).contains(&now) {
         return 0;
     }
     (now - mint_from(mint_end, now, from)).max(0)
 }
-/// What the wallet's Time Balance shows (iOS 2314 MTCoinSplit.growing): the available and the seconds on their way to it.
+/// The Time Balance (iOS 2325 MTCoinSplit.growing): the confirmed available and seconds of presence awaiting the core, never spent.
 pub fn growing(vault: &Vault) -> i64 {
-    available(vault) + if SPLIT.lock().unwrap().is_none() { 0 } else { minting() }
+    available(vault) + if SPLIT.lock().unwrap().is_none() { 0 } else { minting() } + presence_seconds(vault)
 }
 
 /// THE SENDS ON THEIR WAY TO THE CHAIN (iOS MTCoinSplit.flying, fold-7): a SEND laid on the head of height h stands in every state of a
@@ -860,6 +900,34 @@ mod tests {
         assert_eq!(on_way(t1, t1 - 3_600, t1 - 30), 30);
         // before the online cut nothing is on its way
         assert_eq!(on_way(cut - 1, cut - 500, cut - 400), 0);
+        // fold-9: no MINT is shown or laid from the stop
+        assert_eq!(on_way(cointx::MINT_STOP, cut - 500, cut - 400), 0);
+    }
+
+    #[test]
+    fn presence_wait_is_kept_but_never_changes_the_available() {
+        let (v, dir, h) = throwaway();
+        let old_from = MY_FROM.lock().unwrap().clone();
+        let old_stay = *PRESENCE_FROM.lock().unwrap();
+        let old_split = *SPLIT.lock().unwrap();
+        *MY_FROM.lock().unwrap() = Some(h.from());
+        *PRESENCE_FROM.lock().unwrap() = Some(cointx::MINT_STOP + 10);
+        *SPLIT.lock().unwrap() = None;
+        assert_eq!(presence_seconds_at(&v, cointx::MINT_STOP + 15), 5);
+        presence_fold_at(&v, cointx::MINT_STOP + 20);
+        assert_eq!(presence_seconds_at(&v, cointx::MINT_STOP + 25), 15);
+        presence_fold_at(&v, cointx::MINT_STOP + 30);
+        assert_eq!(presence_seconds_at(&v, cointx::MINT_STOP + 30), 20);
+        let now = crate::wire::now_ms() / 1000;
+        *PRESENCE_FROM.lock().unwrap() = Some(now);
+        let before = available(&v);
+        let total = growing(&v);
+        assert!((before + 20..=before + 21).contains(&total), "waiting seconds rise only in the Time Balance: {total}");
+        assert_eq!(available(&v), before, "the available alone is spendable");
+        *MY_FROM.lock().unwrap() = old_from;
+        *PRESENCE_FROM.lock().unwrap() = old_stay;
+        *SPLIT.lock().unwrap() = old_split;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// THROUGH THE NODES, TWO THROWAWAY KEYS (test identities only, the owner's word 21.10.2026 19:0x): each chain opens with its
@@ -882,11 +950,9 @@ mod tests {
         assert!(a0.v3 && a0.declared == 0 && a0.proven <= a0.now - a0.birth + 1, "a new key opens with a GENESIS of 0: {a0:?}");
         let b0 = reconcile(&vb, &hb, true).expect("B's chain answers");
         assert!(b0.v3);
-        // a MINT covers at least 60 s and ends 120 s before the node's now: three minutes after the birth
-        std::thread::sleep(std::time::Duration::from_secs(190));
+        // fold-9: no MINT goes from this client, and the confirmed state does not move by itself
         let a1 = reconcile(&va, &ha, true).expect("A's chain answers again");
-        assert!(0 < a1.proven && a1.proven <= a1.now - a1.birth, "a MINT of at most the seconds lived: {a1:?}");
-        assert!(a1.proven < 300, "the book's 300 are above what time allows the chain");
+        assert_eq!((a1.height, a1.proven), (a0.height, a0.proven), "no MINT after the stop: {a1:?}");
         let secret = PipeKey::new(&crate::crypto::random(32).unwrap());
         note_peer_from(&va, "B", &hb.from());
         let id = match send3(&va, &ha, "B", &secret, 10, None) {

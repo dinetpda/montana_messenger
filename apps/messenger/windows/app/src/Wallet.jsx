@@ -931,9 +931,9 @@ export default function WalletPane({ person, onOpenChat, bar }) {
   }
   // THE PERSON'S COINS ARE THE CHAIN'S (iOS MTWalletScreen.total, fold-7): once the chain has spoken in this run, the available it
   // holds; before it, the book (and the balance a device of the same words told in its tip) -- the sums, π's place and the Send.
-  // THE SECONDS BEFORE THE WINDOW IS FINALIZED RISE ON THE PAGE (iOS 2314, the author's words 26.10.2026 09:2x UTC, links 8615 and
-  // 8617): the Time Balance is the available and the person's seconds on their way to the chain, so it moves every second while the
-  // person is here; the line Available beneath stays what the chain holds, and Send is weighed by that alone.
+  // THE SECONDS BEFORE THE WINDOW IS FINALIZED RISE ON THE PAGE (iOS 2325 MTPresenceWait): the Time Balance is the available and
+  // the person's seconds of presence awaiting the core, so it moves every second while the person is here; the line Available beneath
+  // stays what the chain has confirmed, and Send is weighed by that alone.
   const total = st.split ? (st.growing ?? st.available) : st.balance;
   const spendable = st.split ? st.available : total;
   if (sheet === "send") return <SendSheet available={st.available} onClose={() => { setSheet(null); read(); }} onOpenChat={onOpenChat} />;
