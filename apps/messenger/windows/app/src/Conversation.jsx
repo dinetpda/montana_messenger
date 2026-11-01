@@ -7,7 +7,7 @@ import { AutoReacts, count } from "./Wallet.jsx";
 import { Page, Section } from "./Settings.jsx";
 import { CARD_MARK } from "./Card.jsx";
 import { listen } from "@tauri-apps/api/event";
-import { platesBack, restoresCaption, restoredAfterFailure, withoutPlates } from "./tray.js";
+import { platesBack, restoresCaption, restoresReply, restoredAfterFailure, withoutPlates } from "./tray.js";
 import sendButton from "./assets/send_button.png";
 import voiceKey from "./assets/ios/VoiceRecordButton.png";
 import videoKey from "./assets/ios/VideoRecordButton.png";
@@ -215,6 +215,8 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
   const trayEpoch = useRef(0);
   const draftNow = useRef(draft);
   draftNow.current = draft;
+  const replyNow = useRef(replying);
+  replyNow.current = replying;
   useEffect(() => () => letGo(trayNow.current), []);
   const [seen, setSeen] = useState(null);
   const [typers, setTypers] = useState([]);   // who types in the group now, by name (iOS MTGroupTyping)
@@ -796,10 +798,9 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     }
     if (back.length) {
       setTray((x) => [...back, ...x]);
-      // the words and the quote were cleared when this send began: a retry needs them back
-      if (stillMine() && restoresCaption(back, items[0]?.id, draftNow.current)) {
-        setDraft(caption); setReplying(reply);
-      }
+      // the words and the quote were cleared when this send began: a retry needs them back, but never over a new choice
+      if (stillMine() && restoresCaption(back, items[0]?.id, draftNow.current)) setDraft(caption);
+      if (stillMine() && restoresReply(back, items[0]?.id, replyNow.current)) setReplying(reply);
       invoke("trace", { line: `tray_back n=${back.length} of=${items.length}` }).catch(() => {});
     }
   };

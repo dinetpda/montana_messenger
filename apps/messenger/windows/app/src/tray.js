@@ -36,3 +36,8 @@ export function withoutPlates(tray, sentIds) {
 export function restoresCaption(back, firstPlateId, draftNow) {
   return back.some((plate) => plate.id === firstPlateId) && !String(draftNow || "").trim();
 }
+
+/** Whether a returned first plate may bring its quote back: only when no other reply was chosen meanwhile. */
+export function restoresReply(back, firstPlateId, currentReply) {
+  return back.some((plate) => plate.id === firstPlateId) && !currentReply;
+}

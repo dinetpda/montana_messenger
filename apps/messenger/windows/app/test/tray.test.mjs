@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { platesBack, restoresCaption, restoredAfterFailure, sameTrayOwner, withoutPlates } from "../src/tray.js";
+import { platesBack, restoresCaption, restoresReply, restoredAfterFailure, sameTrayOwner, withoutPlates } from "../src/tray.js";
 
 const plate = (id, name) => ({ id, file: { name, size: 3 }, kind: "doc" });
 
@@ -68,4 +68,9 @@ test("a returned first plate brings its caption back only into an empty field", 
   assert.equal(restoresCaption(items, "p1", ""), true);
   assert.equal(restoresCaption(items, "p1", "typed meanwhile"), false);
   assert.equal(restoresCaption([{ id: "p2" }], "p1", ""), false);
+});
+
+test("a returned first plate never replaces a reply chosen meanwhile", () => {
+  assert.equal(restoresReply([{ id: "p1" }], "p1", null), true);
+  assert.equal(restoresReply([{ id: "p1" }], "p1", { mid: "M2" }), false);
 });
