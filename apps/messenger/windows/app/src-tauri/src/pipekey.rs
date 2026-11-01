@@ -202,10 +202,10 @@ impl PipeKey {
         let k = self.kept();
         let (reference, bid) = (self.ref_bytes()?, unhex(&k.face_bid).filter(|b| b.len() == 32)?);
         let value = arr32(&self.walked(f));
-        // the floor replaces the secret: the cache must not keep the origin that opens the days before it
+        // the floor replaces the secret: no cached walk (the origin, or a value below this floor) may outlive it
         if let Ok(mut g) = WALK.lock() {
             if let Some(cache) = g.as_mut() {
-                cache.remove(&self.secret);
+                cache.clear();
             }
         }
         Some(Floor { day: f, value, root: self.root_key(), rank: self.same_rank(), fingerprint: k.fingerprint,
