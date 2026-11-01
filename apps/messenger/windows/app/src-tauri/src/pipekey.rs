@@ -157,20 +157,18 @@ impl PipeKey {
         if target <= base_steps {
             return base.to_vec();
         }
+        let mut g = WALK.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = g.get_or_insert_with(HashMap::new);
+        let (mut at, mut value) = (base_steps, base.to_vec());
         // below the newest floor the value is computed but never cached: a clone from before the floor must not
-        // leave a retired value behind for later reads
+        // leave a retired value behind. The check shares the cache guard, so a floor cannot slip between it and the insert.
         if base_steps < WALK_MIN.load(std::sync::atomic::Ordering::SeqCst) {
-            let mut value = base.to_vec();
-            let mut at = base_steps;
             while at < target {
                 value = domained("mt-pipe-ratchet", &[&value]).to_vec();
                 at += 1;
             }
             return value;
         }
-        let mut g = WALK.lock().unwrap_or_else(|e| e.into_inner());
-        let cache = g.get_or_insert_with(HashMap::new);
-        let (mut at, mut value) = (base_steps, base.to_vec());
         // the cache is keyed by a digest, never by the secret or a floor value itself
         let key = crate::wire::sha(&[base]).to_vec();
         if let Some((s, v)) = cache.get(&key) {
@@ -219,9 +217,9 @@ impl PipeKey {
         let k = self.kept();
         let (reference, bid) = (self.ref_bytes()?, unhex(&k.face_bid).filter(|b| b.len() == 32)?);
         let value = arr32(&self.walked(f));
-        WALK_MIN.fetch_max(steps(f), std::sync::atomic::Ordering::SeqCst);
-        // the floor replaces the secret: no cached walk (the origin, or a value below this floor) may outlive it
+        // the floor replaces the secret: under the cache guard, nothing below it may stay or be cached again
         if let Ok(mut g) = WALK.lock() {
+            WALK_MIN.fetch_max(steps(f), std::sync::atomic::Ordering::SeqCst);
             if let Some(cache) = g.as_mut() {
                 cache.clear();
             }
