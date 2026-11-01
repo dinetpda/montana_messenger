@@ -305,9 +305,12 @@ pub fn stay_due(vault: &Vault, tick: u64) -> bool {
     let (next, ask, fresh) = stay_step(*stay, tick, here());
     if ask && here() && cointx::MINT_STOP <= now {
         let mut from = PRESENCE_FROM.lock().unwrap();
-        if from.is_none() {
+        let started = from.is_none();
+        if started {
             *from = Some(now);
-        } else {
+        }
+        drop(from);
+        if !started {
             presence_fold_at(vault, now);
         }
     }

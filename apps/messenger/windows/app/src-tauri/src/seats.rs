@@ -391,7 +391,7 @@ pub fn return_to_last(h: &Here) -> Result<(), Refused> {
 
 /// THE WORDS OF A PERSON WAITING ON THE SHELF LIFT THAT SEAT (iOS MTSeats.lift): typed on an empty seat, they seat that person
 /// again, and no second copy of them is born. The empty seat leaves the book. Some(id) when such a person waits.
-/// TRIAL 03: a seat is also lifted by the twin its store names, so a person whose words went missing out of that seat still
+/// a seat is also lifted by the twin its store names, so a person whose words went missing out of that seat still
 /// comes back to their own store instead of being refused in a stranger's seat.
 pub fn lift(h: &Here, words: &str) -> Option<String> {
     let mut b = book(&h.base);
@@ -628,10 +628,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// TRIAL 03: the words of that seat are gone from it, its store and the name of its owner stand; the typed words
+    /// the words of that seat are gone from it, its store and the name of its owner stand; the typed words
     /// still lift that seat by the twin the store names, instead of leaving the person to a stranger's seat.
     #[test]
-    fn trial03_words_lift_the_seat_whose_store_they_own_though_its_words_went_missing() {
+    fn seat_boundary_words_lift_the_seat_whose_store_they_own_though_its_words_went_missing() {
         let base = std::env::temp_dir().join(format!("mt-seat-lift-twin-{}", crate::wire::hex(&crate::crypto::random(6).unwrap())));
         std::fs::create_dir_all(&base).unwrap();
         let h0 = here_at(&base, &Book::default(), None);
@@ -656,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn trial03_lift_refuses_a_seat_whose_mnemonic_and_twin_disagree() {
+    fn seat_boundary_lift_refuses_a_seat_whose_mnemonic_and_twin_disagree() {
         let base = std::env::temp_dir().join(format!("mt-seat-lift-conflict-{}", crate::wire::hex(&crate::crypto::random(6).unwrap())));
         std::fs::create_dir_all(&base).unwrap();
         let h0 = here_at(&base, &Book::default(), None);

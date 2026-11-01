@@ -63,7 +63,7 @@ pub fn state(p: &Person) -> State {
 }
 
 /// "Create": the core draws the words, they are kept, read back, and handed to the words page once.
-/// THE SEAT TAKES THE WORDS FIRST (trial 03): a folder that holds another person's store refuses before anything is
+/// THE SEAT TAKES THE WORDS FIRST : a folder that holds another person's store refuses before anything is
 /// written, so a refused create does not even forget the profile that stood there.
 pub fn create(p: &Person) -> Result<Vec<String>, Failure> {
     let _g = p.lock.lock().unwrap();
@@ -160,16 +160,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    // ── TRIAL 03: THE STORE OF A SEAT IS NOT INHERITED ──────────────────────────────────────────────────────────────
+    // ── THE STORE OF A SEAT IS NOT INHERITED ─────────────────────────────────────────────────────────────────────────
     // The defect (proved red on the code before this change): the words of A are lost (the store stands),
     // identity_state.seated is false, onboarding offers "create"/"restore", and the words of B land in A's folder --
     // the first read of the book then names A's pipes and feed to B. The rule proved here: a seat that holds a person
     // takes only that person's words back.
 
     #[test]
-    fn trial03_create_over_another_persons_store_is_refused_and_keeps_it() {
-        let (p, v, d) = trial03_seat("create-held");
-        let (_words_a, r) = trial03_seat_with_a(&p, &v);
+    fn seat_boundary_create_over_another_persons_store_is_refused_and_keeps_it() {
+        let (p, v, d) = seat_boundary_seat("create-held");
+        let (_words_a, r) = seat_boundary_seat_with_a(&p, &v);
         p.profile.update(|s| s.user_name = "Artificial A".into());
         v.delete(seed::MN); // the words are lost; the store stays
         assert!(!state(&p).seated);
@@ -183,9 +183,9 @@ mod tests {
     }
 
     #[test]
-    fn trial03_restore_of_other_words_into_a_held_seat_is_refused() {
-        let (p, v, d) = trial03_seat("restore-other");
-        trial03_seat_with_a(&p, &v);
+    fn seat_boundary_restore_of_other_words_into_a_held_seat_is_refused() {
+        let (p, v, d) = seat_boundary_seat("restore-other");
+        seat_boundary_seat_with_a(&p, &v);
         v.delete(seed::MN);
         let words_b = seed::generate().unwrap();
         let got = restore(&p, &words_b);
@@ -196,9 +196,9 @@ mod tests {
     }
 
     #[test]
-    fn trial03_restore_of_the_same_words_into_their_own_seat_still_works() {
-        let (p, v, d) = trial03_seat("restore-own");
-        let (words_a, r) = trial03_seat_with_a(&p, &v);
+    fn seat_boundary_restore_of_the_same_words_into_their_own_seat_still_works() {
+        let (p, v, d) = seat_boundary_seat("restore-own");
+        let (words_a, r) = seat_boundary_seat_with_a(&p, &v);
         v.delete(seed::MN); // the words are lost, the store stands
         restore(&p, &words_a).expect("the same person comes back to their own seat");
         assert!(state(&p).seated);
@@ -207,9 +207,9 @@ mod tests {
     }
 
     #[test]
-    fn trial03_an_unknown_owner_refuses_both_create_and_restore() {
-        let (p, v, d) = trial03_seat("unknown-owner");
-        let (_words_a, _r) = trial03_seat_with_a(&p, &v);
+    fn seat_boundary_an_unknown_owner_refuses_both_create_and_restore() {
+        let (p, v, d) = seat_boundary_seat("unknown-owner");
+        let (_words_a, _r) = seat_boundary_seat_with_a(&p, &v);
         v.delete(seed::MN);
         v.delete("mt.twin.ref"); // the words and the name of the owner are gone; the store stands
         let got = create(&p);
@@ -222,8 +222,8 @@ mod tests {
     }
 
     #[test]
-    fn trial03_create_in_an_empty_seat_still_works() {
-        let (p, v, d) = trial03_seat("create-empty");
+    fn seat_boundary_create_in_an_empty_seat_still_works() {
+        let (p, v, d) = seat_boundary_seat("create-empty");
         let words = create(&p).expect("an empty seat takes a new person");
         assert_eq!(words.len(), 24);
         assert!(state(&p).seated && v.has(seed::MN) && v.has("mt.twin.ref"));
@@ -231,9 +231,9 @@ mod tests {
     }
 
     #[test]
-    fn trial03_valid_words_rebuild_a_missing_twin() {
-        let (p, v, d) = trial03_seat("missing-twin");
-        let (words_a, r) = trial03_seat_with_a(&p, &v);
+    fn seat_boundary_valid_words_rebuild_a_missing_twin() {
+        let (p, v, d) = seat_boundary_seat("missing-twin");
+        let (words_a, r) = seat_boundary_seat_with_a(&p, &v);
         v.delete("mt.twin.ref");
         restore(&p, &words_a).expect("valid words name their owner without a stored twin");
         assert!(Book::new(v.clone()).key(&r).is_some());
@@ -242,9 +242,9 @@ mod tests {
     }
 
     #[test]
-    fn trial03_conflicting_mnemonic_and_twin_are_refused_without_a_write() {
-        let (p, v, d) = trial03_seat("conflicting-owner");
-        let (words_a, _r) = trial03_seat_with_a(&p, &v);
+    fn seat_boundary_conflicting_mnemonic_and_twin_are_refused_without_a_write() {
+        let (p, v, d) = seat_boundary_seat("conflicting-owner");
+        let (words_a, _r) = seat_boundary_seat_with_a(&p, &v);
         let words_b = seed::generate().unwrap();
         v.set("mt.twin.ref", seed::twin_of(&words_b).unwrap().as_bytes());
         let old_mnemonic = p.seed.mnemonic().unwrap();
@@ -258,16 +258,16 @@ mod tests {
     }
 
     #[test]
-    fn trial03_a_damaged_mnemonic_still_returns_to_its_twin() {
-        let (p, v, d) = trial03_seat("damaged-mnemonic");
-        let (words_a, r) = trial03_seat_with_a(&p, &v);
+    fn seat_boundary_a_damaged_mnemonic_still_returns_to_its_twin() {
+        let (p, v, d) = seat_boundary_seat("damaged-mnemonic");
+        let (words_a, r) = seat_boundary_seat_with_a(&p, &v);
         assert!(v.set(seed::MN, b"damaged"));
         restore(&p, &words_a).expect("a damaged MN falls back to the stored twin");
         assert!(Book::new(v.clone()).key(&r).is_some());
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    fn trial03_seat(name: &str) -> (Person, Vault, std::path::PathBuf) {
+    fn seat_boundary_seat(name: &str) -> (Person, Vault, std::path::PathBuf) {
         let d = std::env::temp_dir().join(format!(
             "montana-trial03-{name}-{}-{}",
             std::process::id(),
@@ -279,7 +279,7 @@ mod tests {
     }
 
     /// A sits in the seat: their words, one pipe of a correspondence and the chat row.
-    fn trial03_seat_with_a(p: &Person, v: &Vault) -> (String, String) {
+    fn seat_boundary_seat_with_a(p: &Person, v: &Vault) -> (String, String) {
         let words = seed::generate().unwrap();
         p.seed.enter(&words).unwrap();
         let _ = p.seed.twin();
