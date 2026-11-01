@@ -21,3 +21,13 @@ export function restoredAfterFailure({ owner, current, ownerEpoch, currentEpoch,
   if (!sameTrayOwner(owner, current, ownerEpoch, currentEpoch)) return [];
   return [...failed];
 }
+
+/** The failed plates themselves, in their order, from their indices (a tray keeps plates, never indices). */
+export function platesBack(items, failed) {
+  return items.filter((_, i) => failed.includes(i));
+}
+
+/** The tray without the plates a send took; plates staged meanwhile stay (they belong to the next send). */
+export function withoutPlates(tray, sentIds) {
+  return tray.filter((plate) => !sentIds.includes(plate.id));
+}

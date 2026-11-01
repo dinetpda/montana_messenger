@@ -7,7 +7,7 @@ import { AutoReacts, count } from "./Wallet.jsx";
 import { Page, Section } from "./Settings.jsx";
 import { CARD_MARK } from "./Card.jsx";
 import { listen } from "@tauri-apps/api/event";
-import { restoredAfterFailure } from "./tray.js";
+import { platesBack, restoredAfterFailure, withoutPlates } from "./tray.js";
 import sendButton from "./assets/send_button.png";
 import voiceKey from "./assets/ios/VoiceRecordButton.png";
 import videoKey from "./assets/ios/VideoRecordButton.png";
@@ -781,11 +781,12 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     const stillMine = () => trayChat.current === owner && trayEpoch.current === epoch;
     const failed = (await sendFiles(items.map((x) => x.file), () => {
       gone = true; trayLeaving.current = false;
-      if (stillMine()) { setTray([]); setCarried(null); }
+      if (stillMine()) { setTray((x) => withoutPlates(x, items.map((it) => it.id))); setCarried(null); }
     })) || [];
     if (!gone) { trayLeaving.current = false; return; }
     letGo(items.filter((_, i) => !failed.includes(i)));
-    const back = restoredAfterFailure({ owner, current: trayChat.current, ownerEpoch: epoch, currentEpoch: trayEpoch.current, failed });
+    const backIdx = restoredAfterFailure({ owner, current: trayChat.current, ownerEpoch: epoch, currentEpoch: trayEpoch.current, failed });
+    const back = platesBack(items, backIdx);
     if (!back.length && failed.length) {
       letGo(items.filter((_, i) => failed.includes(i)));
       invoke("trace", { line: `tray_drop_other_chat n=${failed.length}` }).catch(() => {});

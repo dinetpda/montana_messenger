@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { restoredAfterFailure, sameTrayOwner } from "../src/tray.js";
+import { platesBack, restoredAfterFailure, sameTrayOwner, withoutPlates } from "../src/tray.js";
+
+const plate = (id, name) => ({ id, file: { name, size: 3 }, kind: "doc" });
 
 test("a successful send puts nothing back", () => {
   assert.deepEqual(restoredAfterFailure({ owner: "A", current: "A", ownerEpoch: 1, currentEpoch: 1, failed: [] }), []);
@@ -34,7 +36,6 @@ test("ownership is both the chat and the visit", () => {
 });
 
 test("a switch during send does not change the new chat's tray", () => {
-  // The old chat's send fails after the person moved to B; B's tray must stay empty.
   let trayB = [];
   const failed = restoredAfterFailure({ owner: "A", current: "B", ownerEpoch: 1, currentEpoch: 1, failed: [0, 1] });
   if (failed.length) trayB = [...failed, ...trayB];
@@ -46,4 +47,18 @@ test("a repeat send restores only its own failure once", () => {
   const second = restoredAfterFailure({ owner: "A", current: "A", ownerEpoch: 1, currentEpoch: 1, failed: [] });
   assert.deepEqual(first, [0]);
   assert.deepEqual(second, []);
+});
+
+test("a failed plate comes back as a plate, so a retry sends its file", () => {
+  const items = [plate("p1", "one.pdf"), plate("p2", "two.pdf")];
+  const back = platesBack(items, [1]);
+  assert.equal(back.length, 1);
+  assert.equal(back[0].id, "p2");
+  assert.equal(back[0].file.size, 3); // not an index: a retry can read .size and send it
+});
+
+test("plates staged while a send is finishing stay in the tray", () => {
+  const tray = [plate("sent", "a.pdf"), plate("new", "b.pdf")];
+  const left = withoutPlates(tray, ["sent"]);
+  assert.deepEqual(left.map((p) => p.id), ["new"]);
 });
