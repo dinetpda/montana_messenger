@@ -305,13 +305,10 @@ pub fn stay_due(vault: &Vault, tick: u64) -> bool {
     let (next, ask, fresh) = stay_step(*stay, tick, here());
     if ask && here() && cointx::MINT_STOP <= now {
         let mut from = PRESENCE_FROM.lock().unwrap();
-        let started = from.is_none();
-        if started {
+        if from.is_none() {
             *from = Some(now);
-        }
-        drop(from);
-        if !started {
-            presence_fold_at(vault, now);
+        } else {
+            presence_fold_locked(vault, &mut from, now);
         }
     }
     if fresh {
@@ -336,20 +333,26 @@ fn stay_step(stay: Option<u64>, tick: u64, here: bool) -> (Option<u64>, bool, bo
         Some(_) => (stay, false, false),
     }
 }
-fn presence_fold_at(vault: &Vault, now: i64) {
-    let Some(from) = *PRESENCE_FROM.lock().unwrap() else { return };
-    let elapsed = (now - from).max(0);
+fn presence_fold_locked(vault: &Vault, from: &mut Option<i64>, now: i64) {
+    let Some(start) = *from else { return };
+    let elapsed = (now - start).max(0);
     if elapsed > 0 {
         let mut s = state(vault);
         s[PRESENCE_WAIT] = json!(s[PRESENCE_WAIT].as_i64().unwrap_or(0) + elapsed);
         save(vault, &s);
     }
-    *PRESENCE_FROM.lock().unwrap() = Some(now);
+    *from = Some(now);
+}
+#[cfg(test)]
+fn presence_fold_at(vault: &Vault, now: i64) {
+    let mut from = PRESENCE_FROM.lock().unwrap();
+    presence_fold_locked(vault, &mut from, now);
 }
 /// The app leaving the screen folds the open stay at once (iOS 2325 MTPresenceWait.close).
 pub fn presence_close(vault: &Vault) {
-    presence_fold_at(vault, crate::wire::now_ms() / 1000);
-    *PRESENCE_FROM.lock().unwrap() = None;
+    let mut from = PRESENCE_FROM.lock().unwrap();
+    presence_fold_locked(vault, &mut from, crate::wire::now_ms() / 1000);
+    *from = None;
 }
 fn presence_seconds_at(vault: &Vault, now: i64) -> i64 {
     if MY_FROM.lock().unwrap().is_none() {

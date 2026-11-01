@@ -156,7 +156,9 @@ impl PipeKey {
         let mut g = WALK.lock().unwrap_or_else(|e| e.into_inner());
         let cache = g.get_or_insert_with(HashMap::new);
         let (mut at, mut value) = (base_steps, base.to_vec());
-        if let Some((s, v)) = cache.get(base) {
+        // the cache is keyed by a digest, never by the secret or a floor value itself
+        let key = crate::wire::sha(&[base]).to_vec();
+        if let Some((s, v)) = cache.get(&key) {
             if *s <= target && *s >= at {
                 at = *s;
                 value = v.clone();
@@ -169,7 +171,7 @@ impl PipeKey {
         if cache.len() >= 256 {
             cache.clear();
         }
-        cache.insert(base.to_vec(), (target, value.clone()));
+        cache.insert(key, (target, value.clone()));
         value
     }
 
