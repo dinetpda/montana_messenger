@@ -50,6 +50,7 @@ pub fn held_hands() -> Option<std::sync::Arc<Hands>> {
 /// that never went gives the name back.
 static AUTO: Mutex<Vec<(String, String, i64)>> = Mutex::new(Vec::new());
 pub fn auto_queue(vault: &Vault, r: &str, mid: &str, coins_: i64) -> bool {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let name = format!("auto:mid:{mid}");
     let now = crate::wire::now_ms() / 1000;
     let mut s = state(vault);
@@ -68,6 +69,7 @@ pub fn auto_take() -> Vec<(String, String, i64)> {
     std::mem::take(&mut *AUTO.lock().unwrap())
 }
 pub fn auto_release(vault: &Vault, mid: &str) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = state(vault);
     if s["once"].as_object_mut().and_then(|m| m.remove(&format!("auto:mid:{mid}"))).is_some() {
         save(vault, &s);
@@ -441,6 +443,7 @@ pub fn split() -> Option<(i64, i64, i64)> {
 /// AN UNRECORDED CALL BURNS ON THE CHAIN (iOS MTCoinTx.owe, fold-7): from the online cut, the first second the node takes a BURN, the
 /// seconds a call burns are owed in the person's folder and laid as one BURN on my chain's head (burn_owed).
 pub fn owe_burn(vault: &Vault, coins_: i64) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if coins_ <= 0 || crate::wire::now_ms() / 1000 < cointx::ONLINE_CUT {
         return;
     }
@@ -472,6 +475,7 @@ pub fn burn_due() -> bool {
 /// covered falls only if the node took it, so no second burns twice; then what is owed, as far as the chain holds it, as the book's
 /// burn stops at its balance. The record is kept before it goes and waits for its node's word when the answer is lost.
 pub fn burn_owed(vault: &Vault, h: &Hands) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let me = h.from();
     let Some(door) = cointx::chain_door(&me) else { return };
     let mut s = state(vault);
@@ -556,6 +560,7 @@ pub enum Sent {
 /// under the record's name; a record no node took gives it back.
 /// `on` -- the letter a paid reaction's SEND stands under (iOS send3 on target): its coins stand under that letter.
 pub fn send3(vault: &Vault, h: &Hands, conv: &str, key: &PipeKey, coins_: i64, on: Option<&str>) -> Sent {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(peer) = peer_from(vault, conv).and_then(|p| cointx::unhex32(&p)) else { return Sent::NotApplicable("no receiver key".into()) };
     let me = h.from();
     let Some(door) = cointx::chain_door(&me) else { return Sent::Failed };
@@ -642,6 +647,7 @@ pub fn receive3(vault: &Vault, h: &Hands, s: &cointx::Rec, conv: &str, key: &Pip
 /// SEND, and the scan asked at once credits that SEND under the letter. A word later than the scan leaves the coins right and under
 /// no letter. The newest 256 names are kept.
 pub fn heard(vault: &Vault, tx: &str, sid: &str) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if tx.len() != 64 || !tx.chars().all(|c| c.is_ascii_hexdigit()) || sid.is_empty() {
         return;
     }
@@ -774,6 +780,7 @@ fn note_credit2(vault: &Vault, id: &str, from: &str, coins: i64, conv: &str) {
 /// it back at its chain node leaves this book by one move under its name, whatever the balance (retake: the truth of a debt). Asked
 /// once an hour. Nothing is laid on any chain: the book follows what the chain already says.
 pub fn credits_gone(vault: &Vault) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let s = state(vault);
     let notes = s["credits2"].as_object().cloned().unwrap_or_default();
     let now = crate::wire::now_ms() / 1000;
@@ -803,6 +810,7 @@ pub fn credits_gone(vault: &Vault) {
 
 /// An untaken SEND comes back after a day by a REFUND on my chain (iOS refundDue): its node's clock decides, one fate a SEND.
 pub fn refund_due(vault: &Vault, h: &Hands) {
+    let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let me = h.from();
     let Some(door) = cointx::chain_door(&me) else { return };
     let mut s = state(vault);
