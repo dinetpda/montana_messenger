@@ -92,8 +92,17 @@ impl Seed {
             (Some(Some(held)), Some(mine)) if held == mine => {} // the person of this seat comes back
             _ => return Err(Refused::SeatHeld),                  // another person's store, or one nobody can name
         }
+        let held_twin = self.vault.get(TWIN);
         self.clear();
-        if self.vault.set(MN, words.as_bytes()) { Ok(()) } else { Err(Refused::Storage) }
+        if self.vault.set(MN, words.as_bytes()) && self.vault.get(MN).as_deref() == Some(words.as_bytes()) {
+            Ok(())
+        } else {
+            // the write did not stand: put the owner's name back, so the store can still be claimed by its own words
+            if let Some(twin) = held_twin {
+                self.vault.set(TWIN, &twin);
+            }
+            Err(Refused::Storage)
+        }
     }
 
     /// The name the store of a seat can give for its owner: the twin their words leave, when it lies there whole.
