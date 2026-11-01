@@ -94,21 +94,27 @@ impl Seed {
             (Some(Some(held)), Some(mine)) if held == mine => {} // the person of this seat comes back
             _ => return Err(Refused::SeatHeld),                  // another person's store, or one nobody can name
         }
-        let held_twin = self.vault.get(TWIN);
-        if let Some(twin) = &held_twin {
-            // the owner's name is kept aside first: if even that cannot be written, nothing is cleared
-            if !self.vault.set(TWIN_HELD, twin) {
+        let held_twin = self.vault.get(TWIN).and_then(|b| String::from_utf8(b).ok());
+        // the owner this restore may clear: the stored name, or the name these very words derive (a store whose
+        // twin marker was lost still names its owner through the words being restored)
+        let owner = held_twin.clone().or_else(|| twin_of(&words));
+        if let Some(twin) = &owner {
+            // kept aside first: if even that cannot be written, nothing is cleared
+            if !self.vault.set(TWIN_HELD, twin.as_bytes()) {
                 return Err(Refused::Storage);
             }
         }
         self.clear();
         if self.vault.set(MN, words.as_bytes()) && self.vault.get(MN).as_deref() == Some(words.as_bytes()) {
+            if let Some(twin) = &owner {
+                self.vault.set(TWIN, twin.as_bytes());
+            }
             self.vault.delete(TWIN_HELD);
             Ok(())
         } else {
             // the write did not stand: put the owner's name back, so the store can still be claimed by its own words
-            if let Some(twin) = held_twin {
-                self.vault.set(TWIN, &twin);
+            if let Some(twin) = &owner {
+                self.vault.set(TWIN, twin.as_bytes());
             }
             Err(Refused::Storage)
         }
