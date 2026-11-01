@@ -96,7 +96,10 @@ impl Seed {
         }
         let held_twin = self.vault.get(TWIN);
         if let Some(twin) = &held_twin {
-            self.vault.set(TWIN_HELD, twin);
+            // the owner's name is kept aside first: if even that cannot be written, nothing is cleared
+            if !self.vault.set(TWIN_HELD, twin) {
+                return Err(Refused::Storage);
+            }
         }
         self.clear();
         if self.vault.set(MN, words.as_bytes()) && self.vault.get(MN).as_deref() == Some(words.as_bytes()) {
