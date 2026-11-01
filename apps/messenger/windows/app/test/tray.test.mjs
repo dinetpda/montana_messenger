@@ -76,6 +76,7 @@ test("a returned first plate never replaces a reply chosen meanwhile", () => {
 });
 
 test("a late preflight never clears another chat's composer", () => {
-  assert.equal(sameComposer("A", "A"), true);
-  assert.equal(sameComposer("A", "B"), false);
+  assert.equal(sameComposer("A", "A", 1, 1), true);
+  assert.equal(sameComposer("A", "B", 1, 1), false);
+  assert.equal(sameComposer("A", "A", 1, 2), false);
 });

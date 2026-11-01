@@ -730,6 +730,7 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
     const list = [...files].filter((f) => f.size > 0);
     if (!list.length) return;
     const caption = draft.trim(), q = replying;
+    const epoch = trayEpoch.current;
     if (talk?.group && !talk.group.owner) {
       for (const f of list) {
         const k = f.type.startsWith("image/") ? "img" : f.type.startsWith("video/") ? "vid" : f.type.startsWith("audio/") ? "aud" : "doc";
@@ -738,7 +739,7 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
       }
     }
     taken?.();
-    if (sameComposer(chat, chatNow.current)) { setDraft(""); setReplying(null); setProblem(null); }
+    if (sameComposer(chat, chatNow.current, epoch, trayEpoch.current)) { setDraft(""); setReplying(null); setProblem(null); }
     pinned.current = true;
     // the places that did not leave are said back, so the tray keeps them (nothing lost, nothing sent twice)
     const run = async () => {
@@ -1238,7 +1239,7 @@ export default function Conversation({ chat, onBack, narrow, myName, myFace, foc
                  onDragStart={(e) => { setCarried(x.id); e.dataTransfer.setData(TRAY_PLATE, x.id); e.dataTransfer.effectAllowed = "move"; }}
                  onDragEnter={() => carryOver(x.id)}
                  onDragOver={(e) => { if (e.dataTransfer.types.includes(TRAY_PLATE)) e.preventDefault(); }}
-                 onDrop={(e) => { e.preventDefault(); e.stopPropagation(); letDown(); }}
+                 onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files?.length) stage(e.dataTransfer.files); else letDown(); }}
                  onDragEnd={() => setCarried(null)}
                  onClick={() => openStaged(x)}>
               {x.kind === "doc" ? (

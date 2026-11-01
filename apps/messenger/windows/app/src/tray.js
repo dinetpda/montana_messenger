@@ -42,7 +42,7 @@ export function restoresReply(back, firstPlateId, currentReply) {
   return back.some((plate) => plate.id === firstPlateId) && !currentReply;
 }
 
-/** Whether a completion still stands in the chat that owns the composer it would clear. */
-export function sameComposer(owner, current) {
-  return owner === current;
+/** Whether a completion still stands in the chat and visit that own the composer it would clear. */
+export function sameComposer(owner, current, ownerEpoch, currentEpoch) {
+  return owner === current && ownerEpoch === currentEpoch;
 }

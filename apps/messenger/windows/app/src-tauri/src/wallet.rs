@@ -817,32 +817,40 @@ pub fn refund_due(vault: &Vault, h: &Hands) {
     if open.is_empty() {
         return;
     }
-    let mut left = vec![];
+    let mut resolved: Vec<String> = Vec::new();
     for o in open {
         let (Some(id), Some(conv), Some(c)) = (o["id"].as_str(), o["conv"].as_str(), o["coins"].as_i64()) else { continue };
         let at = o["at"].as_i64().unwrap_or(0);
         let (_, f) = ask(&door, "/tx-settle", &json!({ "send": id }));
         let fate = f.as_ref().and_then(|f| f["state"].as_str()).unwrap_or("").to_string();
         if fate == "recv" {
+            resolved.push(id.to_string());
             continue;
         }
         let back = format!("{}{id}", coins::TX_BACK);
         if fate == "refund" {
             coins::moved(vault, "receive", c, &back, Some(conv), None);
+            resolved.push(id.to_string());
             continue;
         }
         let due = fate == "open" && chain3(&me, &door).is_some_and(|st| at + 86_460 <= st.now);
         if !due {
-            left.push(o);
             continue;
         }
         let (code, word, _) = lay_on_head(h, &|c3| cointx::build3(h, Kind::Refund, c as u64, birth_ms(), &c3.head, &nonce(), &[0; 32], &[0; 32], id, 0, 0));
         mark(&format!("refund code={code} word={word}"));
-        if code == 200 { coins::moved(vault, "receive", c, &back, Some(conv), None); } else { left.push(o); }
+        if code == 200 {
+            coins::moved(vault, "receive", c, &back, Some(conv), None);
+            resolved.push(id.to_string());
+        }
     }
     let _w = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut latest = state(vault);
-    latest["open"] = json!(left);
+    let kept: Vec<Value> = latest["open"].as_array().cloned().unwrap_or_default()
+        .into_iter()
+        .filter(|o| o["id"].as_str().is_none_or(|id| !resolved.iter().any(|r| r == id)))
+        .collect();
+    latest["open"] = Value::Array(kept);
     save(vault, &latest);
 }
 
