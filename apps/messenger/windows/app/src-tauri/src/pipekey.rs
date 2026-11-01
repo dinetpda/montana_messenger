@@ -93,6 +93,15 @@ type Walks = HashMap<Vec<u8>, (i64, Vec<u8>)>;
 /// the base value -> (the steps walked, the value there), emptied at 256 pipes (iOS walkCache)
 static WALK: Mutex<Option<Walks>> = Mutex::new(None);
 
+/// The identity left: the walk cache goes with it (its keys are derived from a person's secret).
+pub fn forget_walks() {
+    if let Ok(mut g) = WALK.lock() {
+        if let Some(cache) = g.as_mut() {
+            cache.clear();
+        }
+    }
+}
+
 fn steps(day: i64) -> i64 {
     (if day > WALK_ANCHOR_DAY { day - WALK_ANCHOR_DAY } else { 0 }).min(MAX_WALK)
 }
@@ -192,7 +201,14 @@ impl PipeKey {
         }
         let k = self.kept();
         let (reference, bid) = (self.ref_bytes()?, unhex(&k.face_bid).filter(|b| b.len() == 32)?);
-        Some(Floor { day: f, value: arr32(&self.walked(f)), root: self.root_key(), rank: self.same_rank(), fingerprint: k.fingerprint,
+        let value = arr32(&self.walked(f));
+        // the floor replaces the secret: the cache must not keep the origin that opens the days before it
+        if let Ok(mut g) = WALK.lock() {
+            if let Some(cache) = g.as_mut() {
+                cache.remove(&self.secret);
+            }
+        }
+        Some(Floor { day: f, value, root: self.root_key(), rank: self.same_rank(), fingerprint: k.fingerprint,
                      face_bid: arr32(&bid), face_key: k.face_key, pair: k.pair, reference })
     }
 

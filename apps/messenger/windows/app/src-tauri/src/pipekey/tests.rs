@@ -280,3 +280,14 @@ fn a_key_differing_in_any_kept_quantity_is_another_pipe() {
         assert!(other.is_whole() && !other.same_pipe(&a) && !other.same_pipe(&f) && !f.same_pipe(&other), "{what} differs: another pipe");
     }
 }
+
+#[test]
+fn forgetting_the_identity_empties_the_walk_cache() {
+    super::WALK
+        .lock()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .insert(vec![1u8], (1, vec![2u8]));
+    super::forget_walks();
+    assert!(super::WALK.lock().unwrap().as_ref().map_or(true, |c| c.is_empty()));
+}

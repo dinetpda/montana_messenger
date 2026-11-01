@@ -963,6 +963,7 @@ impl Book {
         *self.held_said.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
         *self.refused_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.floored_seen.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::pipekey::forget_walks();
     }
 
     #[cfg(test)]
