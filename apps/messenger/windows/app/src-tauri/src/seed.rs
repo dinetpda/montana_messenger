@@ -21,7 +21,7 @@ pub enum Refused {
     Checksum,
     Storage,
     /// The folder of this seat already holds a person's sealed store, and not this person's: no words are written.
-    /// A store whose owner cannot be named takes nobody's words (trial 03, the store of a seat is not inherited).
+    /// A store whose owner cannot be named takes nobody's words.
     SeatHeld,
     Core(i32),
 }
@@ -81,7 +81,7 @@ impl Seed {
     }
 
     /// The words land in storage, checked by the core first, read back after; anything else is no identity.
-    /// THE STORE OF A SEAT IS NOT INHERITED (trial 03): words enter a folder that holds no person, or the folder of
+    /// THE STORE OF A SEAT IS NOT INHERITED: words enter a folder that holds no person, or the folder of
     /// the very person they open; anything else -- another person's store, or a store whose owner cannot be named --
     /// is refused before a byte is written, so the old store is left as it lies.
     pub fn enter(&self, words: &str) -> Result<(), Refused> {

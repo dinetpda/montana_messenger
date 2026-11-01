@@ -269,7 +269,7 @@ mod tests {
 
     fn seat_boundary_seat(name: &str) -> (Person, Vault, std::path::PathBuf) {
         let d = std::env::temp_dir().join(format!(
-            "montana-trial03-{name}-{}-{}",
+            "montana-seat-{name}-{}-{}",
             std::process::id(),
             crate::wire::hex(&crate::crypto::random(4).unwrap())
         ));
