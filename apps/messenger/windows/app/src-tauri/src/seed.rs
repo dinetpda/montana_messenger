@@ -20,6 +20,9 @@ pub enum Refused {
     UnknownWord,
     Checksum,
     Storage,
+    /// The folder of this seat already holds a person's sealed store, and not this person's: no words are written.
+    /// A store whose owner cannot be named takes nobody's words (trial 03, the store of a seat is not inherited).
+    SeatHeld,
     Core(i32),
 }
 
@@ -77,12 +80,28 @@ impl Seed {
         self.mnemonic().is_some()
     }
 
-    /// The words land in storage, checked by the core first and read back after; anything else is no identity.
+    /// The words land in storage, checked by the core first, read back after; anything else is no identity.
+    /// THE STORE OF A SEAT IS NOT INHERITED (trial 03): words enter a folder that holds no person, or the folder of
+    /// the very person they open; anything else -- another person's store, or a store whose owner cannot be named --
+    /// is refused before a byte is written, so the old store is left as it lies.
     pub fn enter(&self, words: &str) -> Result<(), Refused> {
         let words = normal(words);
         check(&words)?;
+        match (crate::book::store_owner(&self.vault), twin_of(&words)) {
+            (None, _) => {}                                     // the seat holds no person: it takes one
+            (Some(Some(held)), Some(mine)) if held == mine => {} // the person of this seat comes back
+            _ => return Err(Refused::SeatHeld),                  // another person's store, or one nobody can name
+        }
         self.clear();
         if self.vault.set(MN, words.as_bytes()) { Ok(()) } else { Err(Refused::Storage) }
+    }
+
+    /// The name the store of a seat can give for its owner: the twin their words leave, when it lies there whole.
+    /// None: no twin, or one that does not read -- an owner that cannot be named.
+    pub fn stored_twin(vault: &Vault) -> Option<String> {
+        let raw = vault.get(TWIN)?;
+        let twin = String::from_utf8(raw).ok()?;
+        (twin.len() == 32 && twin.chars().all(|c| c.is_ascii_hexdigit())).then(|| twin.to_ascii_lowercase())
     }
 
     pub fn clear(&self) {

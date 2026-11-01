@@ -952,6 +952,27 @@ impl Book {
 
 }
 
+/// WHO A SEAT'S FOLDER BELONGS TO, as the book can tell (trial 03): None when the folder holds no person at all;
+/// Some(Some(twin)) when a store stands and the words' name for its owner lies there whole; Some(None) when a store
+/// stands and nobody can be named. Only a person's own keys count: a device's marks and the seats' own book are not
+/// one, so the drawer's folder is not mistaken for a person's.
+pub fn store_owner(vault: &Vault) -> Option<Option<String>> {
+    let stored = crate::seed::Seed::stored_twin(vault);
+    let derived = vault.get(crate::seed::MN).and_then(|raw| String::from_utf8(raw).ok()).and_then(|words| crate::seed::twin_of(&words));
+    let twin = match (derived, stored) {
+        (Some(from_words), Some(stored)) if from_words == stored => Some(from_words),
+        (Some(_), Some(_)) => None, // MN and TWIN name two people: the owner cannot be told safely
+        (Some(from_words), None) => Some(from_words),
+        (None, stored) => stored, // MN is missing or damaged: the stored twin is the owner's remaining name
+    };
+    // a person's own marks beside the book's: a face, the drafts, the flow of presence, the card's stamp, the mirror's
+    let own = [
+        SECRETS, CHATS, HEALS, GUARD_RECORD, "selfFace", "draftsMap", "moneyFlow", "cardFaceUp", "archiveFilled",
+    ];
+    let holds = twin.is_some() || vault.has(crate::seed::MN) || own.iter().any(|name| vault.has(name));
+    holds.then_some(twin)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -680,4 +680,5 @@ mod tests {
         assert_eq!(missed_since(&log, 0.0), 2);
         assert_eq!(missed_since(&log, 3_000.0), 0, "seen at its very moment");
     }
+
 }

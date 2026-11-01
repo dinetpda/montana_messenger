@@ -391,6 +391,8 @@ pub fn return_to_last(h: &Here) -> Result<(), Refused> {
 
 /// THE WORDS OF A PERSON WAITING ON THE SHELF LIFT THAT SEAT (iOS MTSeats.lift): typed on an empty seat, they seat that person
 /// again, and no second copy of them is born. The empty seat leaves the book. Some(id) when such a person waits.
+/// TRIAL 03: a seat is also lifted by the twin its store names, so a person whose words went missing out of that seat still
+/// comes back to their own store instead of being refused in a stranger's seat.
 pub fn lift(h: &Here, words: &str) -> Option<String> {
     let mut b = book(&h.base);
     let me = h.seat.clone()?;
@@ -398,8 +400,21 @@ pub fn lift(h: &Here, words: &str) -> Option<String> {
         return None;
     }
     let typed = crate::seed::normal(words);
+    let twin = crate::seed::twin_of(&typed);
     let found = b.seats.iter().filter(|s| s.id != me)
-        .find(|s| words_in(&folder(&h.base, &b, &s.id)).is_some_and(|w| crate::seed::normal(&w) == typed))?.id.clone();
+        .find(|s| {
+            let dir = folder(&h.base, &b, &s.id);
+            if words_in(&dir).is_some_and(|w| crate::seed::normal(&w) == typed) {
+                return true;
+            }
+            let vault = dir.join("vault");
+            vault.is_dir()
+                && twin.as_deref().is_some_and(|mine| {
+                    crate::vault::Vault::at(&vault).ok()
+                        .and_then(|v| crate::book::store_owner(&v).flatten())
+                        .as_deref() == Some(mine)
+                })
+        })?.id.clone();
     b.seats.retain(|s| s.id != me);
     b.active = Some(found.clone());
     b.adding = false;
@@ -586,5 +601,79 @@ mod tests {
                 let _ = std::fs::remove_dir_all(&dir);
             });
         }
+    }
+
+    #[test]
+    fn restoring_a_waiting_person_lifts_their_seat_instead_of_reusing_the_empty_one() {
+        let base = std::env::temp_dir().join(format!("mt-seat-lift-{}", crate::wire::hex(&crate::crypto::random(6).unwrap())));
+        std::fs::create_dir_all(&base).unwrap();
+        let h0 = here_at(&base, &Book::default(), None);
+        let empty = make_room(&h0, None).unwrap();
+        let b1 = book(&base);
+        let h1 = here_at(&base, &b1, Some(&empty));
+        let waiting = make_room(&h1, None).unwrap();
+        let b2 = book(&base);
+        let waiting_dir = folder(&base, &b2, &waiting);
+        let words = crate::seed::generate().unwrap();
+        crate::seed::Seed::new(crate::vault::Vault::at(&waiting_dir.join("vault")).unwrap()).enter(&words).unwrap();
+
+        let found = lift(&h1, &words).unwrap();
+
+        assert_eq!(found, waiting);
+        let after = book(&base);
+        assert_eq!(after.active.as_deref(), Some(waiting.as_str()));
+        assert!(!after.adding && !after.seats.iter().any(|seat| seat.id == empty));
+        assert_eq!(folder(&base, &after, &found), waiting_dir);
+        assert!(waiting_dir != folder(&base, &b1, &empty));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// TRIAL 03: the words of that seat are gone from it, its store and the name of its owner stand; the typed words
+    /// still lift that seat by the twin the store names, instead of leaving the person to a stranger's seat.
+    #[test]
+    fn trial03_words_lift_the_seat_whose_store_they_own_though_its_words_went_missing() {
+        let base = std::env::temp_dir().join(format!("mt-seat-lift-twin-{}", crate::wire::hex(&crate::crypto::random(6).unwrap())));
+        std::fs::create_dir_all(&base).unwrap();
+        let h0 = here_at(&base, &Book::default(), None);
+        let empty = make_room(&h0, None).unwrap();
+        let b1 = book(&base);
+        let h1 = here_at(&base, &b1, Some(&empty));
+        let waiting = make_room(&h1, None).unwrap();
+        let b2 = book(&base);
+        let waiting_dir = folder(&base, &b2, &waiting);
+        let words = crate::seed::generate().unwrap();
+        let vault = crate::vault::Vault::at(&waiting_dir.join("vault")).unwrap();
+        let seed = crate::seed::Seed::new(vault.clone());
+        seed.enter(&words).unwrap();
+        assert!(seed.twin().is_some());
+        vault.delete(crate::seed::MN); // the words are lost out of that seat; the store and its owner's name stand
+
+        let found = lift(&h1, &words);
+
+        assert_eq!(found.as_deref(), Some(waiting.as_str()), "the store's own name lifts its seat");
+        assert_eq!(book(&base).active.as_deref(), Some(waiting.as_str()));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn trial03_lift_refuses_a_seat_whose_mnemonic_and_twin_disagree() {
+        let base = std::env::temp_dir().join(format!("mt-seat-lift-conflict-{}", crate::wire::hex(&crate::crypto::random(6).unwrap())));
+        std::fs::create_dir_all(&base).unwrap();
+        let h0 = here_at(&base, &Book::default(), None);
+        let empty = make_room(&h0, None).unwrap();
+        let b1 = book(&base);
+        let h1 = here_at(&base, &b1, Some(&empty));
+        let waiting = make_room(&h1, None).unwrap();
+        let b2 = book(&base);
+        let waiting_dir = folder(&base, &b2, &waiting);
+        let vault = crate::vault::Vault::at(&waiting_dir.join("vault")).unwrap();
+        let seed = crate::seed::Seed::new(vault.clone());
+        seed.enter(&crate::seed::generate().unwrap()).unwrap();
+        let other = crate::seed::generate().unwrap();
+        vault.set("mt.twin.ref", crate::seed::twin_of(&other).unwrap().as_bytes());
+
+        assert_eq!(lift(&h1, &other), None, "a conflicting store must not be lifted by its stored twin alone");
+        assert!(book(&base).adding, "a refused lift changes no seat");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
