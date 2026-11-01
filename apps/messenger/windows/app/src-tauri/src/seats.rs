@@ -415,6 +415,14 @@ pub fn lift(h: &Here, words: &str) -> Option<String> {
                         .as_deref() == Some(mine)
                 })
         })?.id.clone();
+    // the lifted seat lost its words: the phrase that named it is written there before the app restarts into it
+    let found_dir = folder(&h.base, &b, &found);
+    if let Ok(vault) = crate::vault::Vault::at(&found_dir.join("vault")) {
+        let seed = crate::seed::Seed::new(vault);
+        if !seed.has_seed() {
+            let _ = seed.enter(&typed);
+        }
+    }
     b.seats.retain(|s| s.id != me);
     b.active = Some(found.clone());
     b.adding = false;

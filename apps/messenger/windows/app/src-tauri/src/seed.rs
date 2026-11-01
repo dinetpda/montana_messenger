@@ -12,6 +12,8 @@ use std::ffi::CString;
 
 pub(crate) const MN: &str = "mt_active_mnemonic";
 const TWIN: &str = "mt.twin.ref";
+/// The same owner’s name, kept aside while restored words are written; a crash before the write leaves a recoverable store.
+const TWIN_HELD: &str = "mt.twin.held";
 
 /// Why the core refused words (mt-bindings' error codes, as iOS reads them).
 #[derive(Debug, PartialEq, Eq)]
@@ -93,8 +95,12 @@ impl Seed {
             _ => return Err(Refused::SeatHeld),                  // another person's store, or one nobody can name
         }
         let held_twin = self.vault.get(TWIN);
+        if let Some(twin) = &held_twin {
+            self.vault.set(TWIN_HELD, twin);
+        }
         self.clear();
         if self.vault.set(MN, words.as_bytes()) && self.vault.get(MN).as_deref() == Some(words.as_bytes()) {
+            self.vault.delete(TWIN_HELD);
             Ok(())
         } else {
             // the write did not stand: put the owner's name back, so the store can still be claimed by its own words
@@ -108,7 +114,7 @@ impl Seed {
     /// The name the store of a seat can give for its owner: the twin their words leave, when it lies there whole.
     /// None: no twin, or one that does not read -- an owner that cannot be named.
     pub fn stored_twin(vault: &Vault) -> Option<String> {
-        let raw = vault.get(TWIN)?;
+        let raw = vault.get(TWIN).or_else(|| vault.get(TWIN_HELD))?;
         let twin = String::from_utf8(raw).ok()?;
         (twin.len() == 32 && twin.chars().all(|c| c.is_ascii_hexdigit())).then(|| twin.to_ascii_lowercase())
     }
