@@ -163,22 +163,48 @@ pub fn open(key: &[u8], sealed: &[u8]) -> Option<Vec<u8>> {
     crypto::open(key, sealed)
 }
 
+pub struct Opened {
+    pub plain: Vec<u8>,
+    pub walk: crate::pipeheal::Walk,
+    pub window: i64,
+}
+
+/// A letter opened around a minute, telling the heal which walk opened and the letter's own minute.
+pub fn open_walked(sealed: &[u8], key: &crate::pipekey::PipeKey, at_minute: i64) -> Option<Opened> {
+    for w in [at_minute, at_minute - 1, at_minute + 1] {
+        for (walk, body_key) in key.body_keys(w) {
+            if let Some(plain) = open(&body_key, sealed) {
+                return Some(Opened { plain, walk, window: w });
+            }
+        }
+    }
+    None
+}
+
 /// A boxed letter wears the SENDER's minute, the node names the minute it took it: the walk goes back a day.
-pub fn open_boxed(sealed: &[u8], key: &crate::pipekey::PipeKey, at_s: i64) -> Option<Vec<u8>> {
+pub fn open_boxed_walked(sealed: &[u8], key: &crate::pipekey::PipeKey, at_s: i64) -> Option<Opened> {
     let w0 = at_s / 60;
     for w in [w0, w0 - 1, w0 + 1] {
-        if let Some(p) = open(&key.body_key(w), sealed) {
-            return Some(p);
+        for (walk, body_key) in key.body_keys(w) {
+            if let Some(plain) = open(&body_key, sealed) {
+                return Some(Opened { plain, walk, window: w });
+            }
         }
     }
     let mut w = w0 - 2;
     for _ in 0..1439 {
-        if let Some(p) = open(&key.body_key(w), sealed) {
-            return Some(p);
+        for (walk, body_key) in key.body_keys(w) {
+            if let Some(plain) = open(&body_key, sealed) {
+                return Some(Opened { plain, walk, window: w });
+            }
         }
         w -= 1;
     }
     None
+}
+
+pub fn open_boxed(sealed: &[u8], key: &crate::pipekey::PipeKey, at_s: i64) -> Option<Vec<u8>> {
+    open_boxed_walked(sealed, key, at_s).map(|opened| opened.plain)
 }
 
 /// mid‖0‖text‖0‖name‖0‖glyph‖0… — up to `count` fields from `from`; missing ones are empty (iOS parseLetterFields).
@@ -246,6 +272,42 @@ pub fn with_author_tag(body: &[u8], tag: &str) -> Vec<u8> {
     b.extend_from_slice(tag.as_bytes());
     b.push(0);
     if b.len() <= ENVELOPE { b } else { body.to_vec() }
+}
+
+/// The ninth field carries a heal after the author; a body without room rides without it.
+#[allow(dead_code)]
+pub fn with_heal(body: &[u8], field: &[u8]) -> Vec<u8> {
+    const HEAL_FIELDS: usize = AUTHOR_FIELDS + 1;
+    let mut b = body.to_vec();
+    if b.last().is_some_and(|&x| x != 0) {
+        b.push(0);
+    }
+    let mut closed = b.iter().filter(|&&x| x == 0).count();
+    while closed < HEAL_FIELDS {
+        b.push(0);
+        closed += 1;
+    }
+    if closed != HEAL_FIELDS {
+        return body.to_vec();
+    }
+    b.extend_from_slice(b64(field).as_bytes());
+    b.push(0);
+    if b.len() <= ENVELOPE { b } else { body.to_vec() }
+}
+
+/// The heal a letter carries in its ninth field; none when the field is absent, empty or not base64.
+pub fn letter_heal(plain: &[u8]) -> Option<Vec<u8>> {
+    const HEAL_FIELDS: usize = AUTHOR_FIELDS + 1;
+    let mut rest = plain;
+    for _ in 0..HEAL_FIELDS {
+        let z = rest.iter().position(|&x| x == 0)?;
+        rest = &rest[z + 1..];
+    }
+    let end = rest.iter().position(|&x| x == 0).unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    unb64(std::str::from_utf8(&rest[..end]).ok()?)
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 //! the floor's form, on every write and on the first read of each day. The rows keep Android's store names (m, t, o, at, s …)
 //! so a copy of a history reads alike.
 
+use crate::pipeheal::{Part as HealPart, Side as HealSide, Walk as HealWalk};
 use crate::pipekey::PipeKey;
 use crate::vault::Vault;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,8 @@ const SECRETS: &str = "pipeSecrets";
 /// waited; done, the first floor applied (rule 4, kept even when the book's own write is refused). A restart keeps it; a restore
 /// by the words starts without it. A record that does not read is never written over.
 const GUARD_RECORD: &str = "floorGuard";
+/// Each pipe's side of a heal, sealed beside the pipe book as iOS 2323–2325 keeps it.
+const HEALS: &str = "pipeHeal";
 /// A refused write of the book is tried again at the first read this long after the refusal (#38, 22:04 UTC, point 6).
 const RETRY_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 const CHATS: &str = "chats";
@@ -267,6 +270,9 @@ pub struct Book {
     /// THE PIPES IN MEMORY (iOS MTPipeBook.cache, 2311): read once and floored by the day. With the walk of #38 case 13
     /// (MONTANA_CLOCK_GUARD) the book walks to the floor's day on its first read of each new day, a pipe born in this run with it
     keys: Mutex<Held>,
+    /// the receive sides of pipe heals, read once and never replaced by an unreadable record
+    heals: Mutex<Option<BTreeMap<String, HealSide>>>,
+    heal_lock: Mutex<()>,
     /// a walked book the disk refused, and when: the first read RETRY_WAIT after it writes it again
     refused_at: Mutex<Option<std::time::Instant>>,
     retry_wait: Mutex<std::time::Duration>,
@@ -369,7 +375,7 @@ impl Book {
         Book { vault, chats: Mutex::new(None), lock: Mutex::new(()), changes: std::sync::atomic::AtomicU64::new(0), on_disk: Mutex::new(0),
                secrets_back: std::sync::Once::new(), day, nodes, guard: Mutex::new(None), guard_said: Mutex::new(String::new()),
                floored_seen: std::sync::atomic::AtomicU8::new(0), keys: Mutex::new(None), held_said: Mutex::new(String::new()),
-               refused_at: Mutex::new(None), retry_wait: Mutex::new(RETRY_WAIT),
+               heals: Mutex::new(None), heal_lock: Mutex::new(()), refused_at: Mutex::new(None), retry_wait: Mutex::new(RETRY_WAIT),
                #[cfg(test)]
                refuse_writes: std::sync::atomic::AtomicBool::new(false),
                #[cfg(test)]
@@ -708,9 +714,46 @@ impl Book {
         Some(r)
     }
 
+    fn heal_map(&self) -> Option<BTreeMap<String, HealSide>> {
+        let mut cached = self.heals.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(map) = cached.as_ref() {
+            return Some(map.clone());
+        }
+        let read = if !self.vault.has(HEALS) {
+            Some(BTreeMap::new())
+        } else {
+            self.vault.get(HEALS).and_then(|bytes| serde_json::from_slice::<BTreeMap<String, HealSide>>(&bytes).ok())
+        };
+        match read {
+            Some(map) => {
+                *cached = Some(map.clone());
+                Some(map)
+            }
+            None => {
+                crate::trace_line("pipes_heal_unreadable -- kept as it lies");
+                None
+            }
+        }
+    }
+
+    fn store_heals(&self, map: &BTreeMap<String, HealSide>) -> bool {
+        let Ok(bytes) = serde_json::to_vec(map) else { return false };
+        if !self.vault.set(HEALS, &bytes) {
+            crate::trace_line(&format!("pipes_heal_write_refused n={}", map.len()));
+            return false;
+        }
+        *self.heals.lock().unwrap_or_else(|e| e.into_inner()) = Some(map.clone());
+        true
+    }
+
+    fn healing_for(&self, r: &str) -> Option<crate::pipeheal::Healing> {
+        self.heal_map().and_then(|map| map.get(r).and_then(|side| side.healing.clone()))
+    }
+
     /// The pipe of a correspondence as its one owner holds it: it answers what the pipe derives and hands out no byte of it.
     pub fn key(&self, r: &str) -> Option<PipeKey> {
-        self.with_pipes(|m| m.get(r).filter(|k| k.is_whole()).cloned())
+        let healing = self.healing_for(r);
+        self.with_pipes(|m| m.get(r).filter(|k| k.is_whole()).cloned()).map(|key| key.with_healing(healing))
     }
     /// A correspondence this machine can answer for.
     pub fn holds(&self, r: &str) -> bool {
@@ -719,12 +762,79 @@ impl Book {
     pub fn refs(&self) -> Vec<String> {
         self.with_pipes(|m| m.iter().filter(|(_, k)| k.is_whole()).map(|(r, _)| r.clone()).collect())
     }
-    /// Every pipe held, by its name.
+    /// Every pipe held, by its name, with its heal in flight attached.
     pub fn pipes(&self) -> Vec<(String, PipeKey)> {
-        self.with_pipes(|m| m.iter().filter(|(_, k)| k.is_whole()).map(|(r, k)| (r.clone(), k.clone())).collect())
+        self.with_pipes(|m| m.iter().filter(|(_, k)| k.is_whole()).map(|(r, k)| (r.clone(), k.clone())).collect::<Vec<_>>())
+            .into_iter().map(|(r, key)| {
+                let healing = self.healing_for(&r);
+                (r, key.with_healing(healing))
+            }).collect()
     }
-    /// ANOTHER PERSON'S PIPES, READ AND NEVER WRITTEN (a seat's vault, seats::pair_with): floored by the day in hand, the disk
-    /// left as it lies -- no rewrite, no aside.
+
+    fn replace_pipe(&self, r: &str, key: PipeKey) -> bool {
+        let day = self.floor_day();
+        let key = key.floored(day);
+        let _write = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut raw = self.secrets(day);
+        raw.insert(r.to_string(), Value::String(key.sealed_b64(day)));
+        if !self.write_pipes(&raw, day) {
+            return false;
+        }
+        if let Some((_, map)) = self.keys.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            map.insert(r.to_string(), key);
+        }
+        self.floored_seen.store(2, std::sync::atomic::Ordering::SeqCst);
+        true
+    }
+
+    /// A pipe letter opened under a walk: the heal hears it, then reads the letter's ninth field.
+    /// Returns whether the pipe was rebased, so the postman can append its new archive head.
+    pub fn heal_read(&self, r: &str, plain: &[u8], walk: HealWalk, window: i64) -> bool {
+        let part = crate::wire::letter_heal(plain).and_then(|field| HealPart::parse(&field));
+        if part.is_none() && walk == HealWalk::Old {
+            let waiting = self.heal_map().and_then(|map| map.get(r).and_then(|side| side.healing.clone()))
+                .is_some_and(|healing| !healing.holds_old);
+            if !waiting {
+                return false;
+            }
+        }
+        let _step = self.heal_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if !self.with_pipes(|map| map.contains_key(r)) {
+            return false;
+        }
+        let Some(mut map) = self.heal_map() else { return false };
+        let mut side = map.get(r).cloned().unwrap_or_default();
+        let before = side.clone();
+        if let Some(healing) = &mut side.healing {
+            healing.opened(walk);
+        }
+        let mut rebased = false;
+        if side.healing.as_ref().is_some_and(|healing| !healing.holds_old) {
+            let pipe = self.with_pipes(|map| map.get(r).cloned());
+            let next = pipe.and_then(|pipe| pipe.with_healing(side.healing.clone()).rebased());
+            if let Some(next) = next {
+                if self.replace_pipe(r, next) {
+                    side.healing = None;
+                    side.rebased = true;
+                    rebased = true;
+                    crate::trace_line("pipe_healed");
+                }
+            }
+        }
+        if let Some(part) = part {
+            if let Some(pipe) = self.with_pipes(|map| map.get(r).cloned()) {
+                side.received(&part, window.div_euclid(crate::pipekey::MINUTES_PER_DAY), &pipe);
+            }
+        }
+        if side != before {
+            map.insert(r.to_string(), side);
+            self.store_heals(&map);
+        }
+        rebased
+    }
+
+    /// ANOTHER PERSON'S PIPES, READ AND NEVER WRITTEN (a seat's vault, seats::pair_with): both entries, floored by the day in hand,
+    /// the disk left as it lies -- no rewrite, no aside.
     pub fn peek(vault: &Vault, day: i64) -> Vec<PipeKey> {
         let m = match vault.get(SECRETS).and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
             Some(Value::Object(m)) => m,
@@ -826,6 +936,11 @@ impl Book {
             }
             // an introduction still waiting dies with its pipe: its kept confirmation is never another pipe's (D1)
             crate::meeting::first_done(&self.vault, r);
+        }
+        if let Some(mut map) = self.heal_map() {
+            if map.remove(r).is_some() {
+                self.store_heals(&map);
+            }
         }
         let mut g = self.loaded();
         let chats = g.as_mut().unwrap();
@@ -1467,5 +1582,69 @@ mod tests {
             assert_eq!(Book::guard_record(&v).map(|x| x.2), Some(true), "the first floor kept in the guard's record");
             let _ = std::fs::remove_dir_all(&d);
         });
+    }
+
+    #[test]
+    fn the_active_receive_side_heals_a_pipe_and_keeps_it_after_a_restart() {
+        use crate::pipeheal::{Healing, Role};
+        use crate::pipekey::{MINUTES_PER_DAY, WALK_ANCHOR_DAY};
+        use crate::wire::{open_boxed_walked, with_author_tag, with_heal};
+        let dir = dir("heal-receive");
+        let vault = Vault::at(&dir).unwrap();
+        let answered = WALK_ANCHOR_DAY + 1;
+        let today = answered + 1;
+        let book = Book::new_on(vault.clone(), Arc::new(move || today));
+        let pipe = PipeKey::new(&s(90));
+        let r = book.establish(&pipe).unwrap();
+        let (pk, sk) = crate::crypto::mlkem_keypair(&crate::crypto::random(64).unwrap()).unwrap();
+        let offer = HealPart::Offer(pk.clone());
+        let plain = with_heal(&with_author_tag(b"mid:offer\0hello\0", ""), &offer.field());
+        assert!(!book.heal_read(&r, &plain, HealWalk::Old, answered * MINUTES_PER_DAY + 8));
+        assert!(book.heal_map().unwrap().get(&r).and_then(|side| side.owed.clone()).is_some_and(|owed| owed.pk == pk));
+
+        let mut side = book.heal_map().unwrap().get(&r).cloned().unwrap();
+        let answer = side.carry(answered).unwrap();
+        let HealPart::Answer { ref ct, .. } = answer else { panic!("answer") };
+        let ss = crate::crypto::mlkem_decaps(&sk, ct).unwrap();
+        side.sent(&answer, answered, &pipe);
+        let mut map = book.heal_map().unwrap();
+        map.insert(r.clone(), side);
+        assert!(book.store_heals(&map));
+
+        let heal = pipe.heal(answered, &ss, &pk, ct).unwrap();
+        let offering = pipe.with_healing(Some(Healing::new(Role::Offering, heal)));
+        let window = today * MINUTES_PER_DAY + 9;
+        let letter = with_author_tag(b"mid:healed\0under the healed walk\0", "");
+        let sealed = crate::wire::seal(&offering.body_key(window), &letter).unwrap();
+        let opened = open_boxed_walked(&sealed, &book.key(&r).unwrap(), window * 60).unwrap();
+        assert_eq!(opened.walk, HealWalk::Healed);
+        assert!(book.heal_read(&r, &opened.plain, opened.walk, opened.window));
+        let rebased = book.key(&r).unwrap();
+        assert_eq!(rebased.floor_day(), Some(today));
+        assert_eq!(rebased.body_key(window), offering.body_key(window));
+        assert_eq!(rebased.body_keys(window).len(), 1);
+
+        let restarted = Book::new_on(vault.clone(), Arc::new(move || today));
+        let held = restarted.key(&r).unwrap();
+        assert_eq!(held.body_key(window), offering.body_key(window));
+        let late = crate::wire::seal(&offering.body_key(window + 1), &letter).unwrap();
+        assert!(open_boxed_walked(&late, &held, (window + 1) * 60).is_some());
+        let side = restarted.heal_map().unwrap().get(&r).cloned().unwrap();
+        assert!(side.rebased && side.healing.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_pipe_heal_record_is_not_replaced() {
+        let dir = dir("heal-unreadable");
+        let vault = Vault::at(&dir).unwrap();
+        assert!(vault.set(HEALS, b"not json"));
+        let before = vault.get(HEALS).unwrap();
+        let book = Book::new_on(vault.clone(), Arc::new(|| crate::pipekey::WALK_ANCHOR_DAY + 2));
+        let r = book.establish(&PipeKey::new(&s(91))).unwrap();
+        assert!(book.key(&r).is_some());
+        assert!(!book.heal_read(&r, b"mid\0hello\0", HealWalk::Old, (crate::pipekey::WALK_ANCHOR_DAY + 2) * crate::pipekey::MINUTES_PER_DAY));
+        assert_eq!(vault.get(HEALS).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -40,6 +40,7 @@ mod fabric;
 mod forgotten;
 mod passwords;
 mod pipekey;
+mod pipeheal;
 mod person;
 mod picture;
 mod genesis;
@@ -1135,10 +1136,10 @@ fn channels_walk(app: AppHandle) {
                 }
                 kept.clone()
             }),
-            land: Box::new(move |r, plain| {
+            land: Box::new(move |r, opened| {
                 let (p, m) = (a3.state::<Person>(), a3.state::<Messenger>());
                 let Some(d) = m.desk(&p) else { return };
-                if d.channel_letter(r, plain) {
+                if d.channel_opened(r, opened) {
                     changed(&a3);
                     ring(&a3, &p, &m, std::mem::take(&mut *d.news.lock().unwrap()));
                 }

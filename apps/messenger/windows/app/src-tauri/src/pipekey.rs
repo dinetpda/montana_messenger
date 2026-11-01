@@ -11,6 +11,7 @@
 //! value, the earlier tag still accepted on that day and the next; from ERASE_DAY (03.11) the pipe holds the floor -- the walk's
 //! value on F = D - 2 and the quantities kept for good -- and the established secret is erased.
 
+use crate::pipeheal::{Heal, Healing, Walk, ANSWER_SIZE, OFFER_SIZE};
 use crate::wire::{author_tag as wire_author_tag, b64, b64url, conv_tag, domained, hex, hmac, pipe_tag, seal_key, sha, unb64, unhex, with_author_tag};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -52,6 +53,7 @@ pub struct PipeKey {
     /// the pipe of the seed's devices, an invitation's letter key, a room's lane); empty once the walk erased it
     secret: Vec<u8>,
     floor: Option<Box<Floor>>,
+    healing: Option<Healing>,
 }
 
 impl Drop for PipeKey {
@@ -112,7 +114,7 @@ fn same_bytes(a: &[u8], b: &[u8]) -> bool {
 
 impl PipeKey {
     pub fn new(secret: &[u8]) -> PipeKey {
-        PipeKey { secret: secret.to_vec(), floor: None }
+        PipeKey { secret: secret.to_vec(), floor: None, healing: None }
     }
 
     /// A pipe: thirty-two bytes, the size every pipe is born with, or the floor the walk left of them; a record of another size
@@ -178,7 +180,9 @@ impl PipeKey {
         if self.floor.as_ref().is_some_and(|fl| fl.day >= f) {
             return self.clone();
         }
-        self.floor_on(f).map(|fl| PipeKey { secret: vec![], floor: Some(Box::new(fl)) }).unwrap_or_else(|| self.clone())
+        self.floor_on(f)
+            .map(|fl| PipeKey { secret: vec![], floor: Some(Box::new(fl)), healing: self.healing.clone() })
+            .unwrap_or_else(|| self.clone())
     }
     /// The whole floor this pipe gives on the floor day f: the walk's value on f and every quantity kept for good; None for no
     /// pipe, or for a floor already further down than f.
@@ -192,17 +196,42 @@ impl PipeKey {
                      face_bid: arr32(&bid), face_key: k.face_key, pair: k.pair, reference })
     }
 
-    /// The letter body key of a minute: the seal key under the pipe secret of that minute's day.
+    fn send_walk(&self, day: i64) -> Vec<u8> {
+        if let Some(healing) = &self.healing {
+            if healing.sends_healed(day) {
+                if let Some(value) = healing.heal.walked(day) {
+                    return value;
+                }
+            }
+        }
+        self.walked(day)
+    }
+
+    fn open_walks(&self, day: i64) -> Vec<(Walk, Vec<u8>)> {
+        let Some(healing) = &self.healing else { return vec![(Walk::Old, self.walked(day))] };
+        healing.opens(day).into_iter().filter_map(|walk| match walk {
+            Walk::Healed => healing.heal.walked(day).map(|value| (walk, value)),
+            Walk::Old => Some((walk, self.walked(day))),
+        }).collect()
+    }
+
+    /// The letter body key of a minute: the seal key under the walk this side sends under on that minute's day.
     pub fn body_key(&self, window: i64) -> [u8; 32] {
-        seal_key(&self.walked(window.div_euclid(MINUTES_PER_DAY)), window)
+        seal_key(&self.send_walk(window.div_euclid(MINUTES_PER_DAY)), window)
     }
-    /// The conversation's daily label at the node: both sides derive it from the pipe secret of that day.
+    /// Every key a letter of this minute may open under, the healed walk first.
+    pub fn body_keys(&self, window: i64) -> Vec<(Walk, [u8; 32])> {
+        self.open_walks(window.div_euclid(MINUTES_PER_DAY)).into_iter().map(|(walk, value)| (walk, seal_key(&value, window))).collect()
+    }
+    /// The conversation's daily label at the node: both sides derive it from the walk this side sends under.
     pub fn conv_w(&self, day: i64) -> String {
-        conv_tag(&self.walked(day), day)
+        conv_tag(&self.send_walk(day), day)
     }
-    /// The tag of a pipe in a window (the direct lane): over the established secret before TAG_WALK_DAY, as every build laid it;
-    /// from it over the walked value of the window's day -- the window's own day, never the machine's.
-    pub fn tag(&self, window: i64) -> Vec<u8> {
+    /// The labels of a day this side reads a box under, the healed walk first.
+    pub fn conv_ws(&self, day: i64) -> Vec<String> {
+        self.open_walks(day).into_iter().map(|(_, value)| conv_tag(&value, day)).collect()
+    }
+    fn own_tag(&self, window: i64) -> Vec<u8> {
         let day = window.div_euclid(MINUTES_PER_DAY);
         if day >= TAG_WALK_DAY || !self.holds_origin() {
             pipe_tag(&self.walked(day), window)
@@ -210,15 +239,32 @@ impl PipeKey {
             pipe_tag(&self.secret, window)
         }
     }
-    /// The tags a receiver accepts in a window: the tag of the window and, on TAG_WALK_DAY and the day after, the one an earlier
-    /// build laid over the established secret.
+    /// The tag of a pipe in a window: over the healed walk once this side sends under it, else the pipe's own walk.
+    pub fn tag(&self, window: i64) -> Vec<u8> {
+        let day = window.div_euclid(MINUTES_PER_DAY);
+        if let Some(healing) = &self.healing {
+            if healing.sends_healed(day) {
+                if let Some(value) = healing.heal.walked(day) {
+                    return pipe_tag(&value, window);
+                }
+            }
+        }
+        self.own_tag(window)
+    }
+    /// The tags a receiver accepts in a window: the healed walk first, then the old one while it is held.
     pub fn tags(&self, window: i64) -> Vec<Vec<u8>> {
         let day = window.div_euclid(MINUTES_PER_DAY);
-        let now = self.tag(window);
-        if !self.holds_origin() || !(TAG_WALK_DAY..ERASE_DAY).contains(&day) {
-            return vec![now];
+        let walks = self.open_walks(day);
+        let mut out: Vec<Vec<u8>> = walks.iter().filter(|(walk, _)| *walk == Walk::Healed)
+            .map(|(_, value)| pipe_tag(value, window)).collect();
+        if !walks.iter().any(|(walk, _)| *walk == Walk::Old) {
+            return out;
         }
-        vec![now, pipe_tag(&self.secret, window)]
+        out.push(self.own_tag(window));
+        if self.holds_origin() && (TAG_WALK_DAY..ERASE_DAY).contains(&day) {
+            out.push(pipe_tag(&self.secret, window));
+        }
+        out
     }
 
     // ── the root of a conversation ──
@@ -353,7 +399,7 @@ impl PipeKey {
             return same_bytes(&self.secret, &other.secret);
         }
         let f = self.floor_day().unwrap_or(i64::MIN).max(other.floor_day().unwrap_or(i64::MIN));
-        let form = |k: &PipeKey| k.floor_on(f).map(|fl| PipeKey { secret: vec![], floor: Some(Box::new(fl)) }.sealed_form());
+        let form = |k: &PipeKey| k.floor_on(f).map(|fl| PipeKey { secret: vec![], floor: Some(Box::new(fl)), healing: None }.sealed_form());
         match (form(self), form(other)) {
             (Some(a), Some(b)) => same_bytes(&a, &b),
             _ => false,
@@ -367,6 +413,58 @@ impl PipeKey {
             (Some(a), Some(b)) if b > a => other.clone(),
             _ => have.clone(),
         }
+    }
+
+    /// The first value of a healed walk (iOS 2323–2325): old on the answering letter's day, then ss, pk and ct.
+    pub fn healed(old: &[u8], ss: &[u8], pk: &[u8], ct: &[u8]) -> Option<Vec<u8>> {
+        if old.len() != 32 || ss.len() != 32 || pk.len() != OFFER_SIZE || ct.len() != ANSWER_SIZE {
+            return None;
+        }
+        Some(domained("mt-pipe-heal", &[old, ss, pk, ct]).to_vec())
+    }
+
+    /// Of two crossing offers the lower encapsulation key stands; one key met twice is no crossing.
+    pub fn offer_stands(mine: &[u8], theirs: &[u8]) -> bool {
+        mine != theirs && mine < theirs
+    }
+
+    /// This pipe's heal answered on a UTC day, never over the next day's old value.
+    pub fn heal(&self, answered_on: i64, ss: &[u8], pk: &[u8], ct: &[u8]) -> Option<Heal> {
+        if answered_on < WALK_ANCHOR_DAY || self.floor.as_ref().is_some_and(|floor| steps(answered_on) < steps(floor.day)) {
+            return None;
+        }
+        Self::healed(&self.walked(answered_on), ss, pk, ct).map(|first| Heal { day: answered_on, first })
+    }
+
+    pub fn with_healing(&self, healing: Option<Healing>) -> PipeKey {
+        let mut key = self.clone();
+        key.healing = healing;
+        key
+    }
+
+    /// The pipe standing on the healed walk once the old one was erased by a healed letter of the other side.
+    pub fn rebased(&self) -> Option<PipeKey> {
+        let healing = self.healing.as_ref().filter(|healing| !healing.holds_old)?;
+        if !self.is_whole() {
+            return None;
+        }
+        let kept = self.kept();
+        let (reference, bid) = (self.ref_bytes()?, unhex(&kept.face_bid).filter(|b| b.len() == 32)?);
+        Some(PipeKey {
+            secret: vec![],
+            floor: Some(Box::new(Floor {
+                day: healing.heal.day + 1,
+                value: arr32(&healing.heal.first),
+                root: self.root_key(),
+                rank: self.same_rank(),
+                fingerprint: kept.fingerprint,
+                face_bid: arr32(&bid),
+                face_key: kept.face_key,
+                pair: kept.pair,
+                reference,
+            })),
+            healing: None,
+        })
     }
 
     // ── the forms a store of this machine seals: the one road the bytes take out of this type ──
@@ -393,6 +491,7 @@ impl PipeKey {
             secret: vec![],
             floor: Some(Box::new(Floor { day, value: part(0), root: part(1), rank: part(2), fingerprint: part(3), face_bid: part(4),
                                          face_key: part(5), pair: part(6), reference })),
+            healing: None,
         }
     }
     /// One pipe as a store seals it on a day (base64 of its form, floored by the day): a seat's handed pipe.
@@ -501,6 +600,7 @@ impl PipeKey {
             && floored.same_rank() == k.same_rank()
             && Self::from_sealed(&floored.sealed_form()) == floored
             && floored.floored(e + 1) == floored
+            && crate::pipeheal::agrees()
     }
 }
 

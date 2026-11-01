@@ -409,6 +409,20 @@ impl<'a> Desk<'a> {
         n
     }
 
+    /// The active receive side of iOS 2323–2325's pipe heal; a rebased pipe takes a fresh archive head even after an earlier floor.
+    fn heal_read(&self, r: &str, opened: &wire::Opened) {
+        if !self.book.heal_read(r, &opened.plain, opened.walk, opened.window) {
+            return;
+        }
+        let Some(a) = &self.archive else { return };
+        let (mut forms, names) = self.head_marks();
+        forms.remove(r);
+        if self.pipe_head(a, r, &mut forms, (wire::now_ms() / 1000) as u64) {
+            self.save_marks(&forms, &names);
+            self.twin_soon("hist", 30_000);
+        }
+    }
+
     /// A letter into the archive (iOS MontanaArchive.archive): the head of its folder first -- the pipe in the form of the day,
     /// and the name when it changes -- then the letter, a file in the archive's own form.
     pub fn archive_row(&self, r: &str, mine: bool, at_ms: i64, mid: &str, text: &str) {
@@ -1103,9 +1117,10 @@ impl<'a> Desk<'a> {
         }
         for (r, key) in self.book.pipes() {
             for w in box_days(&key, w0) {
-                let cw = key.conv_w(w);
-                let sid = sub_id(&cw, &self.twin);
-                subs.push((cw, key.clone(), From::Pipe(r.clone()), sid));
+                for cw in key.conv_ws(w) {
+                    let sid = sub_id(&cw, &self.twin);
+                    subs.push((cw, key.clone(), From::Pipe(r.clone()), sid));
+                }
             }
         }
         let me = self.twin_me();
@@ -1154,13 +1169,16 @@ impl<'a> Desk<'a> {
                 let cw = l["c"].as_str().unwrap_or("");
                 let Some((_, secret, inv_or_chat, _)) = chunk.iter().find(|x| x.0 == cw) else { continue };
                 let Some(sealed) = l["e"].as_str().and_then(unb64) else { continue };
-                let Some(plain) = wire::open_boxed(&sealed, secret, l["at"].as_i64().unwrap_or(wire::now_ms() / 1000)) else { continue };
+                let Some(opened) = wire::open_boxed_walked(&sealed, secret, l["at"].as_i64().unwrap_or(wire::now_ms() / 1000)) else { continue };
+                if let From::Pipe(r) = inv_or_chat {
+                    self.heal_read(r, &opened);
+                }
                 let one = LANDING.lock().unwrap_or_else(|e| e.into_inner());
                 let ok = match inv_or_chat {
-                    From::Invite(inv) => self.first(&plain, inv),
-                    From::Pipe(r) => self.letter(r, &plain, secret),
-                    From::Twin => me.as_ref().is_some_and(|me| self.twin_takes(me, &plain)),
-                    From::Keep(key) => crate::keeping::takes(&self.twin, key, &plain),
+                    From::Invite(inv) => self.first(&opened.plain, inv),
+                    From::Pipe(r) => self.letter(r, &opened.plain, secret),
+                    From::Twin => me.as_ref().is_some_and(|me| self.twin_takes(me, &opened.plain)),
+                    From::Keep(key) => crate::keeping::takes(&self.twin, key, &opened.plain),
                 };
                 drop(one);
                 if ok {
@@ -1276,9 +1294,16 @@ impl<'a> Desk<'a> {
     /// box opens it, landed as a box letter; a copy the box brings later is heard before and answered only.
     pub fn lane_letter(&self, r: &str, sealed: &[u8]) -> bool {
         let Some(key) = self.book.key(r) else { return false };
-        let Some(plain) = wire::open_boxed(sealed, &key, wire::now_ms() / 1000) else { return false };
+        let Some(opened) = wire::open_boxed_walked(sealed, &key, wire::now_ms() / 1000) else { return false };
+        self.heal_read(r, &opened);
         let _one = LANDING.lock().unwrap_or_else(|e| e.into_inner());
-        self.letter(r, &plain, &key)
+        self.letter(r, &opened.plain, &key)
+    }
+
+    /// A channel letter with the walk and minute that opened it, heard by the pipe heal before it lands.
+    pub fn channel_opened(&self, r: &str, opened: &wire::Opened) -> bool {
+        self.heal_read(r, opened);
+        self.channel_letter(r, &opened.plain)
     }
 
     /// A LETTER OFF A CHANNEL (iOS Post.fromChannel): the pipe's own letter, opened by the pipe's key, lands as a box letter does;

@@ -315,10 +315,7 @@ impl Presence {
         let sealed = unb64(env_b64)?;
         let plain = match at_ms {
             Some(at) => wire::open_boxed(&sealed, key, at / 1000)?,
-            None => {
-                let w = wire::minute();
-                [w, w - 1, w + 1].iter().find_map(|m| wire::open(&key.body_key(*m), &sealed))?
-            }
+            None => wire::open_walked(&sealed, key, wire::minute())?.plain,
         };
         let a = plain.iter().position(|&b| b == 0)?;
         let b = a + 1 + plain[a + 1..].iter().position(|&b| b == 0)?;

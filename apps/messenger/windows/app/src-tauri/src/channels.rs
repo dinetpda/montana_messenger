@@ -27,7 +27,7 @@ const FRAME_MEMORY: usize = 8192;
 /// iOS repairUnnamedOwners: a machine that never named its owner is given ours again, ten times at most.
 const OWNER_ASKS: u32 = 10;
 
-type Land = dyn Fn(&str, &[u8]) + Send + Sync;
+type Land = dyn Fn(&str, &wire::Opened) + Send + Sync;
 
 /// What the holder asks of the person seated, and where a letter off a channel lands.
 pub struct Hooks {
@@ -246,11 +246,11 @@ pub fn lane_accepts(key: &PipeKey, w: i64, tag: &[u8]) -> bool {
     [w - 1, w, w + 1].iter().any(|k| key.tags(*k).iter().any(|t| t.as_slice() == tag))
 }
 /// A lane envelope opened by the pipe: its tag accepted around the window, its body opened under the key of W, W-1 or W+1.
-pub fn lane_open(key: &PipeKey, w: i64, env: &[u8]) -> Option<Vec<u8>> {
+pub fn lane_open(key: &PipeKey, w: i64, env: &[u8]) -> Option<wire::Opened> {
     if env.first() != Some(&0x01) || env.len() <= 17 || !lane_accepts(key, w, &env[1..17]) {
         return None;
     }
-    [w, w - 1, w + 1].iter().find_map(|k| wire::open(&key.body_key(*k), &env[17..]))
+    wire::open_walked(&env[17..], key, w)
 }
 
 /// A CELL THAT ARRIVED (iOS handleOverlayFrame 1318-1572): an ack ends its wait; our own frame back and a repeat go no further; a
@@ -397,8 +397,8 @@ mod tests {
             let held = k.floored(d);
             let old = wire::pipe_tag(&s, w);
             let (tag, env) = lane_frame(&k, w, body).unwrap();
-            assert_eq!(lane_open(&held, w, &env).as_deref(), Some(&body[..]), "the new frame opens on day {d}");
-            assert_eq!(lane_open(&held, w + 1, &env).as_deref(), Some(&body[..]), "a minute's drift on day {d}");
+            assert_eq!(lane_open(&held, w, &env).as_ref().map(|opened| opened.plain.as_slice()), Some(&body[..]), "the new frame opens on day {d}");
+            assert_eq!(lane_open(&held, w + 1, &env).as_ref().map(|opened| opened.plain.as_slice()), Some(&body[..]), "a minute's drift on day {d}");
             if d < TAG_WALK_DAY {
                 assert_eq!(tag, old, "until 31.10 the tag stands on the secret");
             } else {
@@ -442,7 +442,7 @@ mod tests {
             hooks: Hooks {
                 pipes: Box::new(move || vec![("pipe".into(), sb.clone())]),
                 owner: Box::new(|| Some(vec![0x42; 32])),
-                land: Box::new(move |_, plain| { let _ = tx.lock().unwrap().send(plain.to_vec()); }),
+                land: Box::new(move |_, opened| { let _ = tx.lock().unwrap().send(opened.plain.clone()); }),
                 wake: Box::new(|| {}),
             },
             ident: channel::identity(&vb).unwrap(), live: Default::default(), tried: Default::default(), book: Default::default(),
