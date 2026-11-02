@@ -1949,13 +1949,13 @@ enum MontanaWakePush {
     /// second or third — one part's failure does not drop the file.
     /// Idempotent by content address: re-sending a chunk already stored is harmless. A
     /// failure goes to the trace, never silently.
-    /// Bulk cargo yields for the entire lifetime of a call, including its dialing phase.  It is
-    /// not a second queue: the durable media intent remains the only queue and resumes the same
-    /// cargo after the call.  This single gate prevents a photo's hedged uploads from spending
-    /// the signalling roads needed to bring the call up.
+    /// Bulk cargo yields while a call is being born -- dialing, ringing, connecting, reconnecting -- and rides beside a call
+    /// that stands (MontanaCall.isConnecting; the author's words 14448 and 14454, 02.11.2026: in a call the media did not leave).
+    /// It is not a second queue: the durable media intent remains the only queue and resumes the same cargo after the birth.
+    /// This single gate prevents a photo's hedged uploads from spending the signalling roads needed to bring the call up.
     private static func enterBulkLane(_ work: String) async -> Bool {
         var held = false
-        while MontanaCall.isBusy {
+        while MontanaCall.isConnecting {
             if !held {
                 held = true
                 MontanaTrace.mark("bulk_lane", "held=call work=\(work)")
@@ -2104,7 +2104,7 @@ enum MontanaWakePush {
                     if code != 429 { launch() }   // the next door at once; a busy node is waited, not jumped
                 case .tick:
                     if Task.isCancelled { group.cancelAll(); return (-2, "cancelled") }
-                    if bulk && MontanaCall.isBusy {
+                    if bulk && MontanaCall.isConnecting {   // a call being born takes the doors; a standing one shares them
                         group.cancelAll()
                         return (-2, "held=call")
                     }
@@ -2272,7 +2272,7 @@ enum MontanaWakePush {
                         group.addTask { (bid, false) }   // not launched — the leftover goes to the system session below
                         return
                     }
-                    if MontanaCall.isBusy {
+                    if MontanaCall.isConnecting {   // a call being born takes the doors; a standing one shares them
                         group.addTask { (bid, false) }
                         return
                     }
@@ -3078,7 +3078,7 @@ enum MontanaWakePush {
             // The receive lane has already stopped new work, but an answer can finish exactly
             // as a call begins.  Keep every retry behind the same call-priority fact, so a
             // receiver cannot start a fresh hedge during dialling.
-            while MontanaCall.isBusy {
+            while MontanaCall.isConnecting {   // a call being born takes the doors; a standing one shares them
                 if Task.isCancelled { return .unreachable }
                 MontanaTrace.markFolded("blob_dl", "held=call id=\(String(bid.prefix(8)))", window: 30, key: "call")
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -3376,8 +3376,9 @@ enum MontanaWakePush {
     /// Letters the extension stored from pushes — into the chat by the same reception road as
     /// any incoming (.montanaIncoming, mid dedup at the receiver). Called on activation.
     /// A long letter whose blob is not yet reachable waits in the inbox like any pushed letter.
-    static func stashLongLetter(conv: String, mid: String, text: String) {
-        restash(["c": conv, "m": mid, "t": text])
+    /// `extra` -- the rest of the letter's envelope (the box's own keys: at, n, qt, qm, lp, own, au) when the live door stashes it.
+    static func stashLongLetter(conv: String, mid: String, text: String, extra: [String: String] = [:]) {
+        restash(extra.merging(["c": conv, "m": mid, "t": text]) { _, letter in letter })
     }
 
     /// Rows the shelf received for the person now seated (MTSeats.landShelf): into the inbox as a pickup's rows, then the drain.
@@ -5458,6 +5459,18 @@ struct MTClientRelease: Codable, Equatable {
             }
         } catch {
             channelMiss = "channel:" + String(String(describing: error).prefix(80))
+            // THE RECEIPT APPLE WROTE NAMES THE CHANNEL WHEN STOREKIT IS SILENT (the author's word 02.11.2026 18:36 UTC, link
+            // 14795: «why does T1 get no Montana messages about updates -- one system, the same for everyone, one owner»): T1
+            // (iOS 26.7.1) answered every launch from 2342 to 2349 with «RELEASE ask refused channel:unknown» -- AppTransaction
+            // threw, the channel stayed nil and the site was never asked. Apple writes a TestFlight build's receipt as
+            // «sandboxReceipt» and an App Store build's as «receipt»; any other name or none still names no channel, so a store
+            // build never points at a TestFlight beta (2.2).
+            switch Bundle.main.appStoreReceiptURL?.lastPathComponent {
+            case "sandboxReceipt": channel = "beta"
+            case "receipt": channel = "store"
+            default: break
+            }
+            if let channel { MontanaLog.event("RELEASE channel receipt=\(channel) why=\(channelMiss)") }
         }
         #endif
         return channel

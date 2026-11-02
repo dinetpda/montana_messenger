@@ -129,7 +129,6 @@ struct SettingsTabView: View {
                     NavigationLink { NotificationsView() } label: { navLabel("Notifications and Sounds", "bell.badge.fill", .red) }
                     NavigationLink { MTFolderSettingsPage() } label: { navLabel("Chat Folders", "folder.fill", .blue) }   // the folders' tabs (17.10.2026)
                     NavigationLink { DataStorageView() } label: { navLabel("Data and Storage", "arrow.down.circle.fill", .indigo) }
-                    NavigationLink { HomeNodeView() } label: { navLabel("Your node", "server.rack", .gray) }
                     NavigationLink { PrivacyView() } label: { navLabel("Privacy", "lock.fill", .gray) }
                     NavigationLink { MTLevelAccessPage() } label: { navLabel("Access by level", "stairs", .orange) }
                     NavigationLink { AppearanceView() } label: { navLabel("Appearance", "paintbrush.fill", .blue) }
@@ -596,6 +595,12 @@ struct MTWallpaperPicker: View {
     let task: MTWallpaperTask
     /// What the checkmark goes on to: the first screen makes the person after their ground is chosen (the author's word 30.09).
     var onDone: () -> Void = {}
+    /// THE MAKING WEARS THE GROUND AT A TAP (the author's word 02.11.2026 15:54 UTC, link 14611: «while the identity is being
+    /// made, take away the preview and on a tap apply the page's ground at once, without extra actions and extra
+    /// confirmations»): on the first screen a ground or a photo is worn the moment it is touched -- no preview, no second
+    /// checkmark; the page behind the chooser wears it at once, and the chooser's own checkmark goes on to the person.
+    /// Everywhere else the preview stays.
+    var instant = false
     private var conv: String { task.key }
     @Environment(\.montanaClose) private var montanaClose
     @Environment(\.dismiss) private var dismiss
@@ -647,7 +652,8 @@ struct MTWallpaperPicker: View {
             .onChange(of: photoItem) { _, item in
                 Task {
                     guard let d = try? await item?.loadTransferable(type: Data.self), let ui = UIImage(data: d) else { return }
-                    preview = MTWallpaperCandidate(choice: .general, picture: ui)   // placed by hand in the preview, saved as placed
+                    if instant { task.wear(photo: ui) }   // the making: worn whole, at once
+                    else { preview = MTWallpaperCandidate(choice: .general, picture: ui) }   // placed by hand in the preview, saved as placed
                     photoItem = nil
                 }
             }
@@ -708,7 +714,9 @@ struct MTWallpaperPicker: View {
     /// leads to the library tab; every other ground to the preview.
     private func tile(_ c: MTWallpaper.Choice, chosen: Bool) -> some View {
         Button {
-            if case .photo = c { tab = 1 } else { preview = MTWallpaperCandidate(choice: c) }
+            if case .photo = c { tab = 1 }
+            else if instant { task.wear(c) }   // the making: worn at the tap (link 14611)
+            else { preview = MTWallpaperCandidate(choice: c) }
         } label: { face(c, chosen: chosen) }
             .buttonStyle(.plain)
             .accessibilityLabel(label(c))
@@ -903,6 +911,25 @@ enum MTWallpaperTask {
         }
     }
     var isPage: Bool { if case .page = self { return true }; return false }
+    /// THE ONE SETTING OF A GROUND: the preview's checkmark and the making's tap (link 14611) both end here -- the picture
+    /// worn before leaves, the ground is sharp as it was shown, and my page's ground is told to every correspondent (25.09).
+    func wear(_ choice: MTWallpaper.Choice) {
+        let file: (MTWallpaper.Choice) -> String? = { if case .photo(let f) = $0 { return f }; return nil }
+        let conv = key
+        if let old = file(MTWallpaper.choice(for: conv)), old != file(choice) { MTWallpaper.remove(old) }
+        MTWallpaper.setBlur(0, for: conv)   // what is set is sharp, as it was shown (P-136)
+        MTWallpaper.set(choice, for: conv)
+        if isPage { MTPageGround.changed() }
+    }
+    /// A photo worn whole, with no placing by hand: the page's ground kept light (25.09), else the picture at the
+    /// window's size; a picture that cannot be kept is named in the diary and nothing is set.
+    func wear(photo ui: UIImage) {
+        var f = isPage ? MTWallpaper.keep(MTWallpaper.lightData(ui)) : nil
+        if f == nil, let data = ui.jpegData(compressionQuality: 0.92) { f = MTWallpaper.savePhoto(data) }
+        guard let file = f else { MontanaTrace.mark("wallpaper", "REFUSED -- the photo could not be kept (instant)"); return }
+        MontanaTrace.mark("wallpaper", "photo kept how=instant blur=0")
+        wear(.photo(file))
+    }
 }
 struct MTWallpaperPreview: View {
     let task: MTWallpaperTask
@@ -1002,13 +1029,9 @@ struct MTWallpaperPreview: View {
         } else {
             MontanaTrace.mark("wallpaper", "ground kept blur=0")
         }
-        if case .photo(let old) = MTWallpaper.choice(for: conv), old != photoFile(choice) { MTWallpaper.remove(old) }
-        MTWallpaper.setBlur(0, for: conv)   // no slider on this page: what is set is sharp, as the preview showed it
-        MTWallpaper.set(choice, for: conv)
-        if task.isPage { MTPageGround.changed() }   // my page's ground, to every correspondent who reads it (25.09)
+        task.wear(choice)   // no slider on this page: what is set is sharp, as the preview showed it
         leave()
     }
-    private func photoFile(_ c: MTWallpaper.Choice) -> String? { if case .photo(let f) = c { return f }; return nil }
 }
 
 /// MY PAGE OVER ITS GROUND, FOR THE PREVIEW (the author's word 26.09: «the page ground's preview with the real face, name, bio,
@@ -1059,8 +1082,10 @@ struct MTAppIconChooser: View {
                         Icon(name: "AppIconJuno", preview: "IconJunoPreview", label: "Juno"),
                         Icon(name: "AppIconPyramid", preview: "IconPyramidPreview", label: "Pyramid")]
     @State private var current = UIApplication.shared.alternateIconName
+    // THE ICONS SCROLL AND TAKE THE TAP (the author's word 02.11.2026, link 14680 (4)): five miniatures of 72 points with their
+    // gaps are wider than the row; the HStack stood clipped, its last icons past the edge and out of the finger's reach.
     var body: some View {
-        HStack(spacing: 20) {
+        ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 20) {
             ForEach(Self.icons) { icon in
                 Button { choose(icon) } label: {
                     Image(icon.preview).resizable().scaledToFit()
@@ -1074,9 +1099,8 @@ struct MTAppIconChooser: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(icon.label))
             }
-            Spacer(minLength: 0)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 6) }
     }
     private func choose(_ icon: Icon) {
         guard UIApplication.shared.supportsAlternateIcons, current != icon.name else { return }
@@ -1090,8 +1114,7 @@ struct MTAppIconChooser: View {
 }
 
 struct AppearanceView: View {
-    @AppStorage(MTLetterMotion.bounceKey) private var springBounce = MTLetterMotion.defaultBounce
-    @AppStorage(MTLetterMotion.durationKey) private var springDuration = MTLetterMotion.defaultDuration
+    @AppStorage(MTGifPlay.reduceKey) private var gifReduce = false
     @AppStorage("keyboardLook") private var keyboardLook: String = "system"
 @AppStorage(MontanaSkin.key) private var skin = MontanaSkin.native.rawValue
     @AppStorage("bubbleStyle") private var bubbleStyle: String = "montana"
@@ -1196,6 +1219,16 @@ struct AppearanceView: View {
             Section("App icon") {
                 MTAppIconChooser()
             }.listRowBackground(MTGlassRowPlate())
+            // VOICE STYLE STANDS HIGH (link 14680 (6)).
+            // The voice orb's own screen (the author's word 14.09): colours of both sides, the motion.
+            Section("Voice message style") {
+                NavigationLink { MontanaVoiceOrbStyleView() } label: {
+                    HStack(spacing: 12) {
+                        MontanaVoiceOrbBadge(animating: false, mine: false).frame(width: 34, height: 34)
+                        Text("Voice message style").foregroundColor(.primary)
+                    }
+                }
+            }.listRowBackground(MTGlassRowPlate())
             // 14.10.2026: reputation is mandatory; only the owner's balance can be hidden in Privacy.
             Section {
                 Text("Your level is your reputation and is always visible. You can hide your balance in Privacy.")
@@ -1228,23 +1261,12 @@ struct AppearanceView: View {
             } header: { Text("Keyboard") } footer: {
                 Text("How the keyboard looks while you write a message or search: as the system, always dark or always light.")
             }.listRowBackground(MTGlassRowPlate())
+            // GIFS PLAY ON (link 14680 (3)): the checkmark brings back three cycles and the tap.
             Section {
-                VStack(alignment: .leading) {
-                    Text("Springiness")
-                    Slider(value: $springBounce, in: MTLetterMotion.bounceRange)
-                        .accessibilityLabel(Text("Springiness"))
-                }
-                VStack(alignment: .leading) {
-                    Text("Animation duration")
-                    Slider(value: $springDuration, in: MTLetterMotion.durationRange)
-                        .accessibilityLabel(Text("Animation duration"))
-                }
-                Button("Reset motion") {
-                    springBounce = MTLetterMotion.defaultBounce
-                    springDuration = MTLetterMotion.defaultDuration
-                }
-            } header: { Text("Feed motion") } footer: {
-                Text("Adjusts scrolling, new messages and the return after a reply swipe. Reduce Motion takes priority.")
+                Toggle("Reduce GIF animation", isOn: $gifReduce)
+                    .onChange(of: gifReduce) { _, _ in MTGifPlay.shared.reduceChanged() }
+            } footer: {
+                Text("GIFs play without stopping; a tap stops one. With this on, a GIF plays three times and then only on a tap.")
             }.listRowBackground(MTGlassRowPlate())
             Section {
                 Picker("Message style", selection: $bubbleStyle) {
@@ -1255,16 +1277,6 @@ struct AppearanceView: View {
             } header: { Text("Message style") } footer: {
                 Text("Montana: yours in the system blue, others' in grey. Classic: yours in your bubble colour, others' in dark grey. Custom: the colours you set below.")
             }.listRowBackground(MTGlassRowPlate())
-            // The voice orb's own screen (the author's word 14.09): colours of both sides, the motion.
-            Section("Voice message style") {
-                NavigationLink { MontanaVoiceOrbStyleView() } label: {
-                    HStack(spacing: 12) {
-                        MontanaVoiceOrbBadge(animating: false, mine: false).frame(width: 34, height: 34)
-                        Text("Voice message style").foregroundColor(.primary)
-                    }
-                }
-            }.listRowBackground(MTGlassRowPlate())
-
             if bubbleStyle == "custom" {
                 Section("Your bubble") {
                     colorRow("Fill top", $cbMineFill1, .mF1)
@@ -2425,7 +2437,6 @@ struct MontanaOnboardingView: View {
     @State private var step = 0
     @State private var montanaRoad = false                // the doors screen chose Montana: the two roads to a seed stand behind it (29.09)
     @State private var terms = false                      // the terms, opened from the doors' footer
-    @State private var ground = false                     // the person's ground, chosen before the person is made (the author's word 30.09)
     @State private var bornKeys: MontanaSeedKeys.Keys?
     @State private var understood = false
     @State private var savedWords = false
@@ -2444,20 +2455,17 @@ struct MontanaOnboardingView: View {
     @ObservedObject private var keep = MTKeeping.shared           // the parts coming back from the people one wrote to (08.10)
     @State private var barSince = Date()                          // when the bar first stood on the page: the time left is measured from it
     @ObservedObject private var seats = MTSeats.shared            // a person being added: the page stands on the Montana road (06.10)
-    @ObservedObject private var grounds = MTWallpaper.Book.shared // birthChosen: the new person chose a ground, the pages wear it from then on
 
     var body: some View {
         ZStack {
-            // THE LOGIN PAGE IS BURGUNDY BY DEFAULT (the author's word 06.10.2026 12:1x UTC: «by default the login page has the burgundy
-            // ground»): the author's file as it came, until the person being made chooses a ground of their own (ground).
-            if grounds.birthChosen {
-                Color.clear.montanaPageGround().allowsHitTesting(false)   // the login pages wear the one ground of every page
-            } else {
-                MTWallpaper.paint(MTWallpaper.burgundy).ignoresSafeArea().allowsHitTesting(false)
-            }
+            // ONE INDIGO FROM THE FIRST PAGE TO THE LAST (the author's words 02.11.2026 18:35 UTC, links 14793-14794: «it must be ONE
+            // ON ALL PAGES -- INDIGO from the 1st page of creation and login to the last, and not change along the way»): the login,
+            // the making and the restoring stand on the one indigo, never the burgundy, never switched at «Create»; Appearance changes
+            // the page's ground afterwards.
+            MTWallpaper.paint(MTWallpaper.indigo).ignoresSafeArea().allowsHitTesting(false)
             if step == 3 {
                 // Same profile screen as in settings — one source, no second implementation
-                ProfileView(onboarding: true, onFinish: { onDone() })
+                ProfileView(onboarding: true, onFinish: { MontanaBirth.finished(); onDone() })
             } else {
                 VStack { Group {
                     switch step {
@@ -2483,17 +2491,8 @@ struct MontanaOnboardingView: View {
         }
         .environment(\.colorScheme, MTWallpaper.birthScheme)   // the words wear the ink of the ground the page stands on
         .interactiveDismissDisabled()
-        // A making that ends leaves the next one on the login page's own ground; the ground's cover, which hides this screen for
-        // a moment, comes back after its checkmark has set the choice.
-        .onDisappear { if MontanaSeed.hasSeed { grounds.birthChosen = false } }
         .onAppear {   // opened to make a second person: the Montana road beside the seated one
             if MTSeats.shared.takeMontanaRoad() { montanaRoad = true }
-        }
-        // THE GROUND COMES BEFORE THE PERSON (the author's word 30.09: «before the identity is made it shows the page choosing the
-        // identity's ground, then that ground on every page of the making, up to the chats»): the very page of my page's ground,
-        // over everything -- the root's way back stands over this screen -- and its checkmark makes the person.
-        .fullScreenCover(isPresented: $ground) {
-            MTWallpaperPicker(task: .page, onDone: { grounds.birthChosen = true; createSeed() }).environment(\.montanaClose, nil)
         }
         .alert("The identity could not be stored on this device", isPresented: $birthFailed) {
             Button("Got it", role: .cancel) {}
@@ -2553,6 +2552,11 @@ struct MontanaOnboardingView: View {
                     return
                 }
                 bornKeys = acc
+                MontanaBirth.begun(acc.mnemonic)   // a making until the profile's checkmark (link 14680)
+                // THE GROUND IS INDIGO, NOT A STEP (the author's word 02.11.2026, link 14680 (2): «by default let the indigo colour be set
+                // as the page's ground, and remove the step of choosing the ground from the registration completely»): the person is born
+                // on the indigo, and the rest of the making wears it up to the chats; Appearance changes it afterwards.
+                MTWallpaper.set(.named(MTWallpaper.indigo), for: MTWallpaper.page)
                 MontanaTrace.mark("seed_born", "ms=\(ms) stored=1")
                 MontanaEntropy.report("birth")   // what this identity stands on — recorded that same instant
                 step = 1
@@ -2591,7 +2595,7 @@ struct MontanaOnboardingView: View {
             Spacer()
             // EVERY ACT OF THE PATH IS A DOOR (the author's word 29.09, 23:25: the buttons in the new style of our OS): the one plate of the doors
             // (MTLoginDoorStyle), the main act on the platform's blue glass, the second on its clear glass; gold is the sign's alone.
-            Button { guarded(own: true) { if bornKeys == nil { ground = true } else { createSeed() } } } label: {
+            Button { guarded(own: true) { createSeed() } } label: {
                 HStack(spacing: 8) {
                     if creating { ProgressView().tint(.white) }
                     Text(creating ? "Bringing an identity into being…" : "Create")

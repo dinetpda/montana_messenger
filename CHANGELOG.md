@@ -2,6 +2,78 @@
 
 Every build of Montana for iPhone, iPad and Mac, newest first. The version is the one Settings shows: 1.0 (build). Each entry is written here by the build road before the build is made, from the release notes the build carries; a build whose entry is not on this page is not built. Each build's full notes are in [`doc/release-notes/messenger/ios`](doc/release-notes/messenger/ios).
 
+## 1.0 (2351) - 2026-11-02
+
+Source commit `1d30f37f242f`. [Release notes](doc/release-notes/messenger/ios/release-notes-1.0-2351.md).
+
+- A long message that arrives while the app is open appears with its words at once; it no longer hangs as «New message» with a spinning wheel until you open the chat again.
+
+**Security and anonymity**
+
+- A long letter's reference that comes over the live channel is opened by the same road as a pushed one (the sealed cargo fetched by its own key inside the end-to-end envelope) before any row is written; a reference whose cargo is not yet reachable waits in the app's own letter box, never as a row.
+- No new server, network road or key leaving the device.
+
+## 1.0 (2350) - 2026-11-02
+
+Source commit `cfa3a6742919`. [Release notes](doc/release-notes/messenger/ios/release-notes-1.0-2350.md).
+
+- The feed's motion is one for everyone: the springiness and animation duration an older build let you set no longer apply, and they leave the phone at launch.
+- Signing in and creating an identity stand on one indigo background from the first page to the last; it no longer changes along the way.
+- Montana's messages about new builds reach every phone again: a phone whose App Store check stayed silent now reads its channel from the receipt Apple wrote.
+- The balance shows coins by default; the choice of its main sum starts anew.
+- No wallet or VPN icons under the words Pantheon on Fire, and no 0-60 s line under it.
+
+**Security and anonymity**
+
+- Three stored display values leave the phone at launch by their prints (chatSpringBounce, chatSpringDuration and the balance's main sum, 5da1d072bfa76c8b) and no copy carries them any more.
+- When StoreKit's AppTransaction does not answer, the release channel is read only from the name of the app's own receipt file (sandboxReceipt = beta, receipt = store, anything else = no channel); nothing is sent, and a store build never points at a TestFlight link.
+- No new server, network road or key leaving the device.
+
+## 1.0 (2349) - 2026-11-02
+
+Source commit `6e9f03a4389e`. [Release notes](doc/release-notes/messenger/ios/release-notes-1.0-2349.md).
+
+- Leaving the registration midway no longer leaves an identity behind: until the profile's checkmark the making is unfinished, and the next launch forgets it.
+- The registration has no step of choosing the page's ground any more: a new identity is born on the indigo, and Appearance changes it later.
+- GIFs play without stopping; a tap stops one and a tap plays it on. Appearance gains Reduce GIF animation, which brings back three plays and then only on a tap.
+- In Appearance the app icons scroll and take the tap, the feed's motion section is gone, and Voice message style stands higher.
+- Your node is no longer in the Settings list: it opens from Access by level, level 8.
+
+**Security and anonymity**
+
+- Two new stored values, both on this phone: gifReduceMotion (a display preference, carried in the person's copy as other looks), and mt.birth.unfinished (the SHA-256 print of the words being made, never the words, kept only from Create to the profile's checkmark and never in a copy). No new server, network road or key leaving the device.
+
+## 1.0 (2348) - 2026-11-02
+
+Source commit `842496231721`. [Release notes](doc/release-notes/messenger/ios/release-notes-1.0-2348.md).
+
+- Time Coins now says one thing about coins: one coin is one second. The Minting section with its other sources (rights from the wall, coins from chats, the Pantheon, the VPN wall, reactions, burned, received and sent) is gone, and the badge over the coin shows the level alone.
+- The TimeChain page names the chains of earlier builds as one line, Earlier builds.
+
+**Security and anonymity**
+
+- Only screens and their texts change: no new stored value, server, key leaving the device or network road. The coins' chain and its fold are untouched.
+
+## 1.0 (2347) - 2026-11-02
+
+Source commit `386c007160f1`. [Release notes](doc/release-notes/messenger/ios/release-notes-1.0-2347.md).
+
+- When you create an identity, a tap on a background now applies it to the page at once: no preview and no extra confirmation. The same goes for a photo from your library. The checkmark then goes on to create the identity. Choosing the background later in your profile still shows the preview.
+
+**Security and anonymity**
+
+- The background chosen while creating an identity is stored on the device exactly as a background chosen in the profile. No new stored value, server, key leaving the device or network road.
+
+## 1.0 (2345) - 2026-11-02
+
+Source commit `403d039f8ec2`. [Release notes](doc/release-notes/messenger/ios/release-notes-1.0-2345.md).
+
+- The app no longer freezes and closes when it goes to the background. During a call, photos, videos, GIFs and Wall of Thoughts posts now send while the call is connected; they wait only while the call is ringing or connecting. Coins that did not leave because the key's node was busy for the minute are now sent again automatically for up to a minute, and if they still cannot go you are told why and nothing leaves your balance. On the Wall of Thoughts you can like, keep and repost a post even without a chat with its writer, a long press on the like shows who liked it, a long press on the eye of your own posts shows who saw them, and a tap on the writer's name opens their page. A repost now stands under your name, with the original's wall noted below. The side panel's background now reaches the bottom of the screen.
+
+**Security and anonymity**
+
+- A post on the public Wall of Thoughts table now carries the @name its writer holds, which is already public and searchable; a lapsed name is not carried. A page sent to a person who holds a chat with the wall's owner carries the names of up to fifty people who liked each post, as those people named themselves; who viewed a post never leaves the owner's phone. Reacting to a table post without a chat opens a chat by that @name through the existing meeting road. No new stored value, server, key leaving the device or network road.
+
 ## 1.0 (2342) - 2026-11-01
 
 Source commit `0e1d9b73dbee`. [Release notes](doc/release-notes/messenger/ios/release-notes-1.0-2342.md).

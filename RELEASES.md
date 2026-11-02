@@ -15,7 +15,7 @@ does and does not establish is in [`AUDIT.md`](AUDIT.md), section 3.
 | Folder | Build | Source commit | Folder tree | Staged |
 |---|---|---|---|---|
 | `apps/messenger/android` | 552 | `e8e25d01c77e` | `af8316a93370d0a6bdafc3b74e58f2578e832839` | 2026-10-26 10:03 UTC |
-| `apps/messenger/ios` | 1.0 (2342) | `0e1d9b73dbee` | `52c7f497f27da9218bf9d4908e0332be3bb0c9ec` | 2026-11-01 20:42 UTC |
+| `apps/messenger/ios` | 1.0 (2351) | `1d30f37f242f` | `1984155df553f41bede1bd9f34b61e4f5e116221` | 2026-11-02 19:45 UTC |
 | `core` | not built (proposal: Windows K1, PR #141) | `1e85b9663b3f` | `9fa1b2066555d8791b733635f3007b907eb71f7a` | 2026-11-02 19:55 UTC |
 <!-- sources:end -->
 
