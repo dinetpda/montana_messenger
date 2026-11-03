@@ -394,7 +394,7 @@ mod tests {
         let everyone = everyone_sid();
         let mut entries = [entry(
             &everyone,
-            file_all_access(),
+            FILE_ALL_ACCESS,
             GRANT_ACCESS,
             NO_INHERITANCE,
         )];
@@ -422,8 +422,8 @@ mod tests {
         let sid = current_user_sid().expect("a user SID");
         let everyone = everyone_sid();
         let mut entries = [
-            entry(&sid, file_all_access(), GRANT_ACCESS, NO_INHERITANCE),
-            entry(&everyone, file_all_access(), GRANT_ACCESS, NO_INHERITANCE),
+            entry(&sid, FILE_ALL_ACCESS, GRANT_ACCESS, NO_INHERITANCE),
+            entry(&everyone, FILE_ALL_ACCESS, GRANT_ACCESS, NO_INHERITANCE),
         ];
         set_acl(at.as_path(), &mut entries, true).expect("a second trustee");
         let raw = std::fs::File::open(at.as_path()).expect("the file reads");
@@ -470,7 +470,7 @@ mod tests {
         let everyone = everyone_sid();
         let mut entries = [entry(
             &everyone,
-            file_all_access(),
+            FILE_ALL_ACCESS,
             GRANT_ACCESS,
             NO_INHERITANCE,
         )];
