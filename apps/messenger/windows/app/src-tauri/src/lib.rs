@@ -2003,14 +2003,15 @@ fn keeping_walk(app: AppHandle) {
         let (p, m) = (app.state::<Person>(), app.state::<Messenger>());
         let Some(d) = m.desk(&p) else { continue };
         let words = p.seed.mnemonic();
-        let card = match my_card(&p, &m.vault) {
-            Ok(card) => card,
+        let card = my_card(&p, &m.vault);
+        let moved = match card {
+            Ok(card) => keeping::work(&d, words.as_deref(), card),
             Err(_) => {
-                trace_line("copy_card: keeper copy refused: the local card cannot be read");
-                continue;
+                trace_line("copy_card: owner copy refused: the local card cannot be read");
+                // The keeper still serves receiving, releases and peers' requests; only our copy is withheld.
+                keeping::work(&d, None, None)
             }
         };
-        let moved = keeping::work(&d, words.as_deref(), card);
         let ru = p.lang.starts_with("ru");
         for (chat, bytes) in moved.told {
             // THE PERSON IS TOLD whose part this machine holds and how many bytes, the moment it first holds one (App)
