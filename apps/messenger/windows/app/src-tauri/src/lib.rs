@@ -576,7 +576,8 @@ async fn history_copy(app: AppHandle) -> Result<String, String> {
         let (p, m) = (app.state::<Person>(), app.state::<Messenger>());
         m.fill_archive(&p);
         let a = m.archive(&p).ok_or("seat")?;
-        let file = history::make_copy_planned(&a, &m.book, &m.media, my_card(&p), &history::Plan::load(&m.vault), &Default::default()).ok_or("seal")?;
+        let card = my_card(&p, &m.vault).map_err(|_| "card")?;
+        let file = history::make_copy_planned(&a, &m.book, &m.media, card, &history::Plan::load(&m.vault), &Default::default()).ok_or("seal")?;
         let now = chrono_moment();
         let dir = std::path::PathBuf::from(std::env::var_os("USERPROFILE").ok_or("home")?).join("Downloads").join("Montana");
         std::fs::create_dir_all(&dir).map_err(|_| "disk")?;
@@ -621,8 +622,11 @@ fn history_restore(app: AppHandle, request: tauri::ipc::Request) -> Result<(), S
                 None => json_err("seat"),
                 Some(a) => match history::read_copy(&a.keys().entropy, &file) {
                     Ok(records) => {
-                        lay_card(&p, &records);
-                        serde_json::to_value(history::restore(&a, &m.book, &m.media, Some(&m.faces), &records)).unwrap_or_default()
+                        if lay_card(&p, &m, &records).is_err() {
+                            json_err("card")
+                        } else {
+                            serde_json::to_value(history::restore(&a, &m.book, &m.media, Some(&m.faces), &records)).unwrap_or_default()
+                        }
                     }
                     Err(e) => json_err(&format!("{e:?}")),
                 },
@@ -636,10 +640,23 @@ fn history_restore(app: AppHandle, request: tauri::ipc::Request) -> Result<(), S
 }
 
 /// THE CARD OF THIS PERSON IN A COPY (iOS seedCard «s:»): the name and the words about them, so a phone opening the copy calls
-/// the person by their name again.
-fn my_card(p: &Person) -> Option<history::Record> {
+/// the person by their name again; the permanent card and its keys travel with it (iOS copy set), sealed under the words.
+fn my_card(p: &Person, vault: &crate::vault::Vault) -> Result<Option<history::Record>, ()> {
     let s = p.profile.read();
-    history::card_record(&[("userName", s.user_name), ("profileBio", s.bio), ("profileLink", s.link)])
+    let mut words: Vec<(&str, String)> = vec![
+        ("userName", s.user_name.clone()),
+        ("profileBio", s.bio.clone()),
+        ("profileLink", s.link.clone()),
+    ];
+    let (permanent, keys) = card::Card::copy_snapshot(vault)?;
+    for (key, raw) in [("rdvPermanent", permanent), ("cardKeys", keys)] {
+        if let Some(raw) = raw {
+            if !raw.is_empty() {
+                words.push((key, wire::b64(&raw)));
+            }
+        }
+    }
+    Ok(history::card_record(&words))
 }
 
 /// YOUR NODE (iOS HomeNodeView over HomeNodeWatch, MontanaHomeNode): the address, a pinned certificate or none, the person's switch,
@@ -714,7 +731,8 @@ fn seal_copy(p: &Person, m: &Messenger, dir: &std::path::Path) -> Result<(std::p
     m.fill_archive(p);
     let a = m.archive(p).ok_or("seat")?;
     // the copy stays light: a file the node keeps in pieces is not sealed into it a second time (iOS: MTHomeBook.kept)
-    let file = history::make_copy_planned(&a, &m.book, &m.media, my_card(p), &history::Plan::load(&m.vault), &homeshelf::kept(&m.vault)).ok_or("seal")?;
+    let card = my_card(p, &m.vault).map_err(|_| "card")?;
+    let file = history::make_copy_planned(&a, &m.book, &m.media, card, &history::Plan::load(&m.vault), &homeshelf::kept(&m.vault)).ok_or("seal")?;
     std::fs::create_dir_all(dir).map_err(|_| "disk")?;
     let path = dir.join(history::copy_name(&a.keys().entropy, &chrono_moment()));
     std::fs::write(&path, &file).map_err(|_| "disk")?;
@@ -772,9 +790,9 @@ async fn home_node_take_back(app: AppHandle) -> Result<serde_json::Value, String
             home_road(&app, "restoring", Some(0.0));
             let read = std::fs::read(&path).map_err(|_| "disk".to_string()).and_then(|bytes| history::read_copy(&entropy, &bytes).map_err(|e| format!("{e:?}")));
             let _ = std::fs::remove_file(&path);
-            let laid = read.map(|records| {
-                lay_card(&p, &records);
-                history::restore(&a, &m.book, &m.media, Some(&m.faces), &records)
+            let laid = read.and_then(|records| {
+                lay_card(&p, &m, &records).map_err(|_| "card".to_string())?;
+                Ok(history::restore(&a, &m.book, &m.media, Some(&m.faces), &records))
             });
             home_road(&app, "restoring", None);
             laid.map(|r| {
@@ -955,10 +973,25 @@ fn home_walk(app: AppHandle) {
 }
 
 /// A COPY'S CARD LAID HERE (iOS layCard «s:»): the person's own words where this machine holds none -- what stands here first.
-fn lay_card(p: &Person, records: &[history::Record]) {
-    let words = history::card_words(records);
+/// The permanent record is the copy's; the key map is unioned by the card owner, so a newer local key is never dropped.
+fn lay_card(p: &Person, m: &Messenger, records: &[history::Record]) -> Result<(), &'static str> {
+    let words = history::card_fields(records).map_err(|_| "card")?;
     if words.is_empty() {
-        return;
+        return Ok(());
+    }
+    let permanent = match words.iter().find(|(k, _)| *k == "rdvPermanent") {
+        Some((_, v)) => Some(wire::unb64(v).ok_or("card")?),
+        None => None,
+    };
+    let keys = match words.iter().find(|(k, _)| *k == "cardKeys") {
+        Some((_, v)) => Some(wire::unb64(v).ok_or("card")?),
+        None => None,
+    };
+    if (permanent.is_some() || keys.is_some())
+        && !card::Card::lay_copy(&m.vault, permanent.as_deref(), keys.as_deref())
+    {
+        trace_line("copy_card: the permanent card or its keys could not be laid");
+        return Err("card");
     }
     p.profile.update(|s| {
         for (k, v) in &words {
@@ -970,6 +1003,7 @@ fn lay_card(p: &Person, records: &[history::Record]) {
             }
         }
     });
+    Ok(())
 }
 
 fn json_err(e: &str) -> serde_json::Value {
@@ -985,7 +1019,10 @@ fn take_light_then(app: AppHandle, keepers: bool) {
         let (Some(words), Some(twin), Some(a)) = (p.seed.mnemonic(), p.seed.twin(), m.archive(&p)) else { return };
         let mut sum = history::Restored::default();
         for records in history::take_light(&words, &twin, &twin::device_name(&twin, &a), &a.keys().entropy) {
-            lay_card(&p, &records);
+            if lay_card(&p, &m, &records).is_err() {
+                let _ = app.emit(RESTORED, json_err("card"));
+                return;
+            }
             let r = history::restore(&a, &m.book, &m.media, Some(&m.faces), &records);
             sum.chats += r.chats;
             sum.records += r.records;
@@ -1009,7 +1046,9 @@ fn take_from_keepers(app: &AppHandle, words: &str, twin: &str, a: &history::Arch
     let entropy = a.keys().entropy;
     let laid = keeping::take_back(words, twin, &twin::device_name(twin, a), &entropy, 6.0, |records| {
         let (p, m) = (app.state::<Person>(), app.state::<Messenger>());
-        lay_card(&p, &records);
+        if lay_card(&p, &m, &records).is_err() {
+            return false;
+        }
         let r = history::restore(a, &m.book, &m.media, Some(&m.faces), &records);
         changed(app);
         let _ = app.emit(RESTORED, serde_json::to_value(&r).unwrap_or_default());
@@ -1964,7 +2003,14 @@ fn keeping_walk(app: AppHandle) {
         let (p, m) = (app.state::<Person>(), app.state::<Messenger>());
         let Some(d) = m.desk(&p) else { continue };
         let words = p.seed.mnemonic();
-        let moved = keeping::work(&d, words.as_deref(), my_card(&p));
+        let card = match my_card(&p, &m.vault) {
+            Ok(card) => card,
+            Err(_) => {
+                trace_line("copy_card: keeper copy refused: the local card cannot be read");
+                continue;
+            }
+        };
+        let moved = keeping::work(&d, words.as_deref(), card);
         let ru = p.lang.starts_with("ru");
         for (chat, bytes) in moved.told {
             // THE PERSON IS TOLD whose part this machine holds and how many bytes, the moment it first holds one (App)
@@ -4429,9 +4475,14 @@ fn walk(app: AppHandle) {
                         m.vault.set("lightTried", (wire::now_ms() / 1000).to_string().as_bytes());
                         if let (Some(words), Some(a)) = (p.seed.mnemonic(), m.archive(&p)) {
                             let g = m.vault.get("lightGen").and_then(|b| String::from_utf8(b).ok()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0) + 1;
-                            if history::lay_light(&words, &a, g, my_card(&p)) {
-                                m.vault.set("lightGen", g.to_string().as_bytes());
-                                m.vault.set("lightAt", (wire::now_ms() / 1000).to_string().as_bytes());
+                            match my_card(&p, &m.vault) {
+                                Ok(card) => {
+                                    if history::lay_light(&words, &a, g, card) {
+                                        m.vault.set("lightGen", g.to_string().as_bytes());
+                                        m.vault.set("lightAt", (wire::now_ms() / 1000).to_string().as_bytes());
+                                    }
+                                }
+                                Err(_) => trace_line("copy_card: light copy refused: the local card cannot be read"),
                             }
                         }
                     }
