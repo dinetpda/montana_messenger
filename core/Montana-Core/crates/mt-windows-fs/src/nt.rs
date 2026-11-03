@@ -154,7 +154,7 @@ impl Parent {
         if text.starts_with("\\\\") {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "a network path is refused: the data directory must be on a local volume",
+                "a network or verbatim path is refused: the data directory must be a normal local path",
             ));
         }
         let bytes = text.as_bytes();

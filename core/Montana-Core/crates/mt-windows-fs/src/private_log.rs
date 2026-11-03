@@ -26,8 +26,8 @@ use windows_sys::Win32::Security::{
     SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, SYNCHRONIZE, WRITE_DAC,
+    FILE_ALL_ACCESS, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, SYNCHRONIZE, WRITE_DAC,
 };
 use windows_sys::Win32::System::SystemServices::{
     ACCESS_ALLOWED_ACE_TYPE, SECURITY_DESCRIPTOR_REVISION,
@@ -35,11 +35,7 @@ use windows_sys::Win32::System::SystemServices::{
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 // The one right the owner holds in the file: the standard full right of a file. Reading it back
-// is what tells a narrow DACL from a DACL that merely looks narrow. It is a function rather than a
-// constant because the conformance gate registers every constant that opens with a digit.
-fn file_all_access() -> u32 {
-    0x001F_01FF
-}
+// is what tells a narrow DACL from a DACL that merely looks narrow.
 
 struct Handle(HANDLE);
 impl Drop for Handle {
@@ -113,10 +109,10 @@ fn current_user_sid() -> io::Result<Vec<u8>> {
     Ok(copied)
 }
 
-/// A protected DACL that grants file_all_access() to `sid` and to no other trustee.
+/// A protected DACL that grants FILE_ALL_ACCESS to `sid` and to no other trustee.
 fn owner_only_acl(sid: &[u8]) -> io::Result<*mut ACL> {
     let mut entry: EXPLICIT_ACCESS_W = unsafe { std::mem::zeroed() };
-    entry.grfAccessPermissions = file_all_access();
+    entry.grfAccessPermissions = FILE_ALL_ACCESS;
     entry.grfAccessMode = GRANT_ACCESS;
     entry.grfInheritance = NO_INHERITANCE;
     entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
@@ -219,7 +215,7 @@ fn verify(handle: HANDLE, sid: &[u8]) -> io::Result<()> {
         return Err(last_error());
     }
     let ace = unsafe { &*(ace as *const ACCESS_ALLOWED_ACE) };
-    if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 || ace.Mask != file_all_access() {
+    if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 || ace.Mask != FILE_ALL_ACCESS {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "the file's entry is not a full right for its owner",

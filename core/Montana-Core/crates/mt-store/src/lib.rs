@@ -410,12 +410,12 @@ fn take_root_lock(root: &Path) -> Result<fs::File, StoreError> {
         .create(true)
         .share_mode(0)
         .open(&at)
-        .map_err(|e| match (e.kind(), e.raw_os_error()) {
-            (std::io::ErrorKind::PermissionDenied, _) | (_, Some(32)) => {
-                StoreError::HeldByAnother {
-                    at: root.display().to_string(),
-                }
-            }
+        .map_err(|e| match e.raw_os_error() {
+            // 32 = ERROR_SHARING_VIOLATION, 33 = ERROR_LOCK_VIOLATION: another process holds
+            // the file. Access denied or any other filesystem error is reported as itself.
+            Some(32) | Some(33) => StoreError::HeldByAnother {
+                at: root.display().to_string(),
+            },
             _ => said(&at, e),
         })
 }

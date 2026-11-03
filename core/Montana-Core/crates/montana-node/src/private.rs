@@ -16,8 +16,6 @@ use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-// The same two steps, with the file closed to its owner by the platform's own rule: a mode on
-// Unix, an owner-only DACL on Windows. Both refuse rather than write when the rule cannot stand.
 use std::sync::{Mutex, OnceLock};
 
 enum Details {
@@ -58,6 +56,8 @@ pub fn stand() -> std::io::Result<()> {
     Ok(())
 }
 
+// The same two steps, with the file closed to its owner by the platform's own rule: a mode on
+// Unix, an owner-only DACL on Windows. Both refuse rather than write when the rule cannot stand.
 /// Opens the file for appending with the owner-only rule already in force. On Unix the mode is
 /// applied to the opened file; on Windows the protected DACL is applied and read back on the
 /// handle. An existing file is narrowed; a file that cannot be narrowed is refused.
