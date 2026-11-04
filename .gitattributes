@@ -1,3 +1,6 @@
 # The node door and its installer are published to bare machines as iOS ships them: LF.
 apps/messenger/windows/app/src-tauri/node/montana-home-node.py text eol=lf
 apps/messenger/windows/app/src-tauri/node/install.sh text eol=lf
+# The canonical Montana wordlist is hashed and parsed from raw embedded bytes.
+# A CRLF checkout changes those bytes and aborts identity creation.
+"core/Montana wordlist.txt" text eol=lf
