@@ -68,6 +68,123 @@ impl<'a> Card<'a> {
         payload.len() >= 1184 && self.map(KEYS).contains_key(&b64url(&payload[..1184]))
     }
 
+    /// The key map a copy carries: every key is the base64url of a 1184-byte root, every secret is 2400 bytes.
+    fn parse_keys(raw: &[u8]) -> Option<BTreeMap<String, Vec<u8>>> {
+        let Value::Object(o) = serde_json::from_slice::<Value>(raw).ok()? else { return None };
+        let mut out = BTreeMap::new();
+        for (k, v) in o {
+            let Some(root) = unb64url(&k) else { return None };
+            if root.len() != 1184 || b64url(&root) != k {
+                return None;
+            }
+            let b = v.as_str().and_then(unb64)?;
+            if b.len() != 2400 {
+                return None;
+            }
+            out.insert(k, b);
+        }
+        Some(out)
+    }
+
+    /// The permanent map a copy carries: each invitation is 32 base64url bytes and each card is a bounded payload.
+    fn parse_permanent(raw: &[u8]) -> Option<Vec<Vec<u8>>> {
+        let Value::Object(o) = serde_json::from_slice::<Value>(raw).ok()? else { return None };
+        let mut out = Vec::new();
+        for (inv, v) in o {
+            let Some(invite) = unb64url(&inv) else { return None };
+            if invite.len() != 32 || b64url(&invite) != inv {
+                return None;
+            }
+            let p = v.as_str().and_then(unb64)?;
+            if p.len() < 1184 || p.len() > 1184 + NAME_LIMIT {
+                return None;
+            }
+            out.push(p);
+        }
+        (!out.is_empty()).then_some(out)
+    }
+
+    /// A copy's whole card records, read under the card owner's lock: the permanent record and the key map as the
+    /// vault keeps them (iOS copies `rdvPermanent` and `cardKeys` separately). An existing record that does not
+    /// open is an export error, not an omission.
+    pub fn copy_snapshot(vault: &Vault) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), ()> {
+        let _g = LOCK.lock().unwrap();
+        for name in [PERM, KEYS] {
+            if vault.has(name) && vault.get(name).is_none() {
+                return Err(());
+            }
+        }
+        let permanent = vault.get(PERM);
+        let keys = vault.get(KEYS);
+        let parsed_keys = match keys.as_deref() {
+            Some(raw) => Some(Self::parse_keys(raw).ok_or(())?),
+            None => None,
+        };
+        if let Some(raw) = permanent.as_deref() {
+            let payloads = Self::parse_permanent(raw).ok_or(())?;
+            let Some(keys) = parsed_keys.as_ref() else { return Err(()) };
+            for payload in payloads {
+                if keys.get(&b64url(&payload[..1184])).is_none_or(|k| k.len() != 2400) {
+                    return Err(());
+                }
+            }
+        }
+        Ok((permanent, keys))
+    }
+
+    /// Lay a copy's card: the permanent record replaces this machine's, the key map is unioned entry by entry so a
+    /// newer local key is never dropped (iOS SeedScope.unionKeys). The whole operation is under the card owner's lock.
+    pub fn lay_copy(vault: &Vault, permanent: Option<&[u8]>, keys: Option<&[u8]>) -> bool {
+        let _g = LOCK.lock().unwrap();
+        // an existing record that does not open is not an absent one: never overwrite it
+        for name in [PERM, KEYS] {
+            if vault.has(name) && vault.get(name).is_none() {
+                return false;
+            }
+        }
+        let c = Card { vault };
+        let mut incoming = BTreeMap::new();
+        if let Some(raw) = keys {
+            let Some(parsed) = Self::parse_keys(raw) else { return false };
+            incoming = parsed;
+        }
+        let permanent_payloads = match permanent {
+            Some(raw) => match Self::parse_permanent(raw) {
+                Some(p) => p,
+                None => return false,
+            },
+            None => Vec::new(),
+        };
+        let mut local = if vault.has(KEYS) {
+            let Some(raw) = vault.get(KEYS) else { return false };
+            match Self::parse_keys(&raw) {
+                Some(m) => m,
+                None => return false,
+            }
+        } else {
+            BTreeMap::new()
+        };
+        for (k, v) in incoming {
+            local.entry(k).or_insert(v);
+        }
+        // a permanent card without its matching 2400-byte secret is not a usable card
+        for payload in &permanent_payloads {
+            let root = b64url(&payload[..1184]);
+            if local.get(&root).is_none_or(|k| k.len() != 2400) {
+                return false;
+            }
+        }
+        if !local.is_empty() && !c.save(KEYS, &local) {
+            return false;
+        }
+        if let Some(raw) = permanent {
+            if !vault.set(PERM, raw) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// The card's body wears the profile's name of this moment (iOS reminted): the key, and the name after it.
     fn with_name(payload: &[u8], name: &str) -> Vec<u8> {
         let mut out = payload[..1184].to_vec();
@@ -336,6 +453,32 @@ mod tests {
         assert!(c.accept_first(&ct, inv64, "AAAAAAAAAAAAAAAAAAAAAA").is_none(), "a wrong confirmation opens nothing");
         assert!(c.accept_first(&ct, inv64, "").is_none(), "an empty confirmation opens nothing");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_copy_lays_the_permanent_record_and_unions_the_keys() {
+        let (src, ds) = vault("copy-src");
+        let a = Card { vault: &src };
+        let link = a.offer_permanent("Alice").unwrap();
+        let (perm, keys) = Card::copy_snapshot(&src).unwrap();
+        let (dst, dd) = vault("copy-dst");
+        let b = Card { vault: &dst };
+        let old = b.offer_permanent("Bob").unwrap();
+        assert_ne!(old, link);
+        let bob_key = b.map(KEYS).into_iter().next().unwrap();
+        assert!(Card::lay_copy(&dst, perm.as_deref(), keys.as_deref()));
+        assert_eq!(b.offer_permanent("Alice").unwrap(), link, "the restored permanent link replaces the old one and is reused");
+        assert_eq!(b.map(KEYS).get(&bob_key.0), Some(&bob_key.1), "a pre-existing local key survives the union");
+
+        let k = b64url(&[3u8; 1184]);
+        let extra = json!({ k.clone(): b64(&[4u8; 2400]) }).to_string();
+        assert!(Card::lay_copy(&dst, None, Some(extra.as_bytes())));
+        let local = b.map(KEYS);
+        assert!(local.len() >= 2);
+        assert_eq!(local.get(&k).map(Vec::as_slice), Some(&[4u8; 2400][..]), "a local key survives the union");
+        assert_eq!(Card::copy_snapshot(&dst).unwrap().0.unwrap(), perm.unwrap());
+        let _ = std::fs::remove_dir_all(&ds);
+        let _ = std::fs::remove_dir_all(&dd);
     }
 
     #[test]

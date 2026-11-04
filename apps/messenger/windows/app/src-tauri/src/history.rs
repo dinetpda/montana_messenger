@@ -35,7 +35,7 @@ fn plain(n: &str) -> bool {
 /// The account card (iOS MontanaBackup kindCard, seedCard / layCard): a JSON map of the person's own values, each key tagged
 /// by its form («s:» a word). An iPhone's card carries its whole store; Windows holds of it the person's own words.
 pub const KIND_CARD: u8 = 3;
-pub const CARD_WORDS: [&str; 3] = ["userName", "profileBio", "profileLink"];
+pub const CARD_WORDS: [&str; 5] = ["userName", "profileBio", "profileLink", "rdvPermanent", "cardKeys"];
 pub(crate) const HEAD_DIR: u8 = 2;
 pub const APP: &str = "quest.montana.app";
 
@@ -682,16 +682,42 @@ pub fn make_copy_planned(archive: &Archive, book: &Book, store: &media::Store, c
 }
 
 /// THE CARD A COPY OF THIS MACHINE CARRIES (iOS seedCard «s:»): the person's own words that are not empty; none -- no card.
+/// The tag a card value wears in an iOS copy: the card records are `d:` (decrypted vault JSON, base64), the profile
+/// words are `s:`.
+fn card_tag(k: &str) -> &'static str {
+    if k == "rdvPermanent" || k == "cardKeys" { "d" } else { "s" }
+}
+
 pub fn card_record(words: &[(&str, String)]) -> Option<Record> {
-    let m: Map<String, Value> = words.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (format!("s:{k}"), json!(v))).collect();
+    let m: Map<String, Value> = words.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (format!("{}:{k}", card_tag(k)), json!(v))).collect();
     (!m.is_empty()).then(|| Record { kind: KIND_CARD, name: String::new(), data: Value::Object(m).to_string().into_bytes() })
+}
+
+/// The card fields with their strict type check: a `d:` record present in any other form is malformed, never absent.
+pub(crate) fn card_fields(records: &[Record]) -> Result<Vec<(&'static str, String)>, ()> {
+    let cards: Vec<&Record> = records.iter().filter(|r| r.kind == KIND_CARD).collect();
+    if cards.is_empty() {
+        return Ok(Vec::new());
+    }
+    let data: Vec<u8> = cards.iter().flat_map(|r| r.data.iter().copied()).collect();
+    let m: Map<String, Value> = serde_json::from_slice(&data).map_err(|_| ())?;
+    let mut out = Vec::new();
+    for k in CARD_WORDS {
+        let tag = card_tag(k);
+        if let Some(v) = m.get(&format!("{tag}:{k}")) {
+            let Some(s) = v.as_str() else {
+                if tag == "d" { return Err(()); }
+                continue;
+            };
+            out.push((k, s.to_string()));
+        }
+    }
+    Ok(out)
 }
 
 /// The person's own words a copy's card carries (iOS layCard «s:»), each of CARD_WORDS it names.
 pub fn card_words(records: &[Record]) -> Vec<(&'static str, String)> {
-    let data: Vec<u8> = records.iter().filter(|r| r.kind == KIND_CARD).flat_map(|r| r.data.iter().copied()).collect();
-    let m: Map<String, Value> = serde_json::from_slice(&data).unwrap_or_default();
-    CARD_WORDS.iter().filter_map(|k| m.get(&format!("s:{k}")).and_then(|v| v.as_str()).map(|v| (*k, v.to_string()))).collect()
+    card_fields(records).unwrap_or_default()
 }
 
 /// The name a letter's file is kept under in the archive and in a copy (iOS «f»): its own, with the extension it came with.
@@ -883,6 +909,34 @@ mod tests {
                       Record { kind: KIND_CARD, name: String::new(), data: ios[20..].to_vec() }];
         assert_eq!(card_words(&pieces), vec![("userName", "Bob".to_string()), ("profileBio", "hi".to_string())]);
         assert!(card_record(&[("userName", String::new())]).is_none());
+    }
+
+    #[test]
+    fn the_card_carries_the_permanent_card_and_its_keys() {
+        let card = card_record(&[
+            ("rdvPermanent", "eyJwZXJtIjoiY2FyZCJ9".into()),
+            ("cardKeys", "eyJrZXkiOiJ2YWx1ZSJ9".into()),
+        ]).unwrap();
+        assert_eq!(card.kind, KIND_CARD);
+        let v: Value = serde_json::from_slice(&card.data).unwrap();
+        assert_eq!(v, json!({
+            "d:rdvPermanent": "eyJwZXJtIjoiY2FyZCJ9",
+            "d:cardKeys": "eyJrZXkiOiJ2YWx1ZSJ9"
+        }), "iOS card records are d:, not settings s:");
+        let words = card_words(&[card]);
+        assert_eq!(words, vec![
+            ("rdvPermanent", "eyJwZXJtIjoiY2FyZCJ9".to_string()),
+            ("cardKeys", "eyJrZXkiOiJ2YWx1ZSJ9".to_string()),
+        ]);
+        assert!(card_record(&[("rdvPermanent", String::new()), ("cardKeys", String::new())]).is_none());
+    }
+
+    #[test]
+    fn a_malformed_card_record_is_refused_not_treated_as_absent() {
+        let bad = Record { kind: KIND_CARD, name: String::new(), data: br#"{"d:rdvPermanent":1}"#.to_vec() };
+        assert!(card_fields(&[bad]).is_err());
+        let plain = Record { kind: KIND_CARD, name: String::new(), data: br#"{"s:userName":"Ann"}"#.to_vec() };
+        assert_eq!(card_fields(&[plain]).unwrap(), vec![("userName", "Ann".to_string())]);
     }
 
     #[test]
